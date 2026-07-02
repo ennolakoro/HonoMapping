@@ -71,6 +71,7 @@ export const clients = sqliteTable("clients", {
   hardwareVersion: text("hardware_version"),
   softwareVersion: text("software_version"),
   macAddress: text("mac_address"),
+  wanIp: text("wan_ip"),
   txPower: text("tx_power"),
   temperature: text("temperature"),
   voltage: text("voltage"),

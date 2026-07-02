@@ -105,6 +105,7 @@ let currentModemSN = '';
 let currentCwmpId = '';
 let currentCwmpNamespace = '';
 let currentParamsToRequest: string[] = [];
+let currentTriggeredClientId: number | null = null;
 let gponFaultRetried = false; // Tandai sudah retry tanpa GPON param
 
 // Endpoint Mini ACS (Terbuka untuk Modem / CPE)
@@ -247,31 +248,56 @@ const cwmpHandler = async (c: any) => {
     // 2. Simpan ke database
     if (currentModemSN) {
       try {
-        await db.update(clients)
-          .set({
-            wifiSsid: params.ssid || undefined,
-            wifiPassword: params.password || undefined,
-            wifiSsid5g: params.ssid5g || undefined,
-            wifiPassword5g: params.password5g || undefined,
-            lanStatus: params.lanStatus || undefined,
-            associatedDevices: params.associatedDevices || undefined,
-            brand: params.brand || undefined,
-            modelName: params.modelName || undefined,
-            hardwareVersion: params.hardwareVersion || undefined,
-            softwareVersion: params.softwareVersion || undefined,
-            macAddress: params.macAddress || undefined,
-            rxPower: params.rxPower || undefined,
-            txPower: params.txPower || undefined,
-            temperature: params.temperature || undefined,
-            voltage: params.voltage || undefined
-          })
-          .where(eq(clients.snModem, currentModemSN))
-        console.log(`[DB] Data modem ${currentModemSN} berhasil diupdate: SSID=${params.ssid}, RxPower=${params.rxPower}, Temp=${params.temperature}, Volt=${params.voltage}`)
+        const modemParams = {
+          snModem: currentModemSN || undefined,
+          wifiSsid: params.ssid ?? null,
+          wifiPassword: params.password ?? null,
+          wifiSsid5g: params.ssid5g ?? null,
+          wifiPassword5g: params.password5g ?? null,
+          lanStatus: params.lanStatus ?? null,
+          associatedDevices: params.associatedDevices ?? null,
+          brand: params.brand ?? null,
+          modelName: params.modelName ?? null,
+          hardwareVersion: params.hardwareVersion ?? null,
+          softwareVersion: params.softwareVersion ?? null,
+          macAddress: params.macAddress ?? null,
+          wanIp: params.wanIp ?? null,
+          rxPower: params.rxPower ?? null,
+          txPower: params.txPower ?? null,
+          temperature: params.temperature ?? null,
+          voltage: params.voltage ?? null
+        }
+
+        let updatedRows: { id: number }[] = []
+        if (currentTriggeredClientId) {
+          updatedRows = await db.update(clients)
+            .set(modemParams)
+            .where(eq(clients.id, currentTriggeredClientId))
+            .returning({ id: clients.id })
+        }
+
+        if (updatedRows.length === 0) {
+          updatedRows = await db.update(clients)
+            .set(modemParams)
+            .where(eq(clients.snModem, currentModemSN))
+            .returning({ id: clients.id })
+        }
+
+        if (updatedRows.length === 0) {
+          console.warn(`[DB] Tidak ada client yang cocok untuk SN ${currentModemSN}. Data inform diterima tetapi belum masuk ke row client.`)
+        } else {
+          console.log(`[DB] Data modem ${currentModemSN} berhasil diupdate pada client id ${updatedRows.map(row => row.id).join(', ')}: SSID=${params.ssid}, RxPower=${params.rxPower}, Temp=${params.temperature}, Volt=${params.voltage}`)
+        }
       } catch (e) {
         console.error("Gagal update parameter ke DB:", e)
       }
     }
     
+    currentTriggeredClientId = null
+    currentModemSN = ''
+    waitingForEmptyPost = false
+    gponFaultRetried = false
+
     // Akhiri sesi dengan HTTP 200 kosong (204 tidak didukung @hono/node-server di Node v20)
     return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
   }
@@ -302,6 +328,7 @@ const cwmpHandler = async (c: any) => {
     // Fault lain atau sudah retry → akhiri sesi
     console.log(`[CWMP] Sesi diakhiri karena Fault.`)
     currentModemSN = ''
+    currentTriggeredClientId = null
     waitingForEmptyPost = false
     gponFaultRetried = false
     return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
@@ -343,6 +370,15 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
   const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
   
   try {
+    let body: any = {}
+    try {
+      body = await c.req.json()
+    } catch {
+      body = {}
+    }
+    const pseudoDeviceId = body?.deviceId ? parseInt(body.deviceId, 10) : null
+    currentTriggeredClientId = pseudoDeviceId && pseudoDeviceId >= 1000000 ? pseudoDeviceId - 1000000 : null
+
     // Menyuruh Mikrotik "mencolek" modem
     await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
     return c.json({ message: `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal` })
@@ -378,6 +414,7 @@ app.get('/api/protected/devices', async (c) => {
     hardwareVersion: client.hardwareVersion,
     softwareVersion: client.softwareVersion,
     macAddress: client.macAddress,
+    wanIp: client.wanIp,
     rxPower: client.rxPower,
     txPower: client.txPower,
     temperature: client.temperature,
