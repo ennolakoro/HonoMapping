@@ -398,6 +398,7 @@ app.get('/api/protected/devices', async (c) => {
     id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
     type: 'CLIENT',
     name: client.name,
+    phone: client.phone,
     parentId: client.odpId,
     lat: client.lat,
     lng: client.lng,
@@ -454,6 +455,7 @@ app.post('/api/protected/devices', async (c) => {
       // Masukkan ke tabel clients khusus
       const result = await db.insert(clients).values({
         name: body.nama || body.name,
+        phone: body.phone || null,
         odpId: parentId, // Karena induk dari client adalah ODP
         lat: parseFloat(body.lat),
         lng: parseFloat(body.lng),
@@ -739,6 +741,7 @@ app.post('/api/protected/devices/:id/update', async (c) => {
       await db.update(clients)
         .set({
           name: body.name,
+          phone: body.phone || null,
           pppoeUsername: body.pppoeUsername || null,
           snModem: body.snModem || null,
           wifiSsid: body.wifiSsid || null,
