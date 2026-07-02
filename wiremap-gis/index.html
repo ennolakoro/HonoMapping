@@ -19,7 +19,8 @@
       (function() {
         var host = window.location.hostname;
         if (host === 'localhost' || host === '127.0.0.1') {
-          window.__BACKEND_URL__ = 'http://127.0.0.1:8787';
+          // Arahkan langsung ke VPS agar frontend lokal dapat langsung mengakses data real VPS
+          window.__BACKEND_URL__ = 'http://mikrowire.id:8787';
         } else {
           // Saat diakses dari luar (domain/IP VPS), gunakan IP/hostname yang sama port 8787
           window.__BACKEND_URL__ = window.location.protocol + '//' + host + ':8787';

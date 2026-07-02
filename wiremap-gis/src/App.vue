@@ -3,10 +3,12 @@ import { ref, onMounted } from 'vue'
 import LeafletMap from './components/Map.vue'
 import AddDeviceModal from './components/AddDeviceModal.vue'
 import LoginScreen from './components/LoginScreen.vue'
+import RouterConfigModal from './components/RouterConfigModal.vue'
 import { api } from './api'
 import { store } from './store'
 
 const isLoggedIn = ref(false)
+const isRouterModalOpen = ref(false)
 
 onMounted(() => {
   // Cek token saat muat ulang
@@ -46,7 +48,10 @@ const handleSaveDevice = async (deviceData) => {
       
       <div class="flex items-center gap-4">
         <div class="flex items-center gap-2 border-r border-outline-variant pr-4">
-           <!-- Tools placeholder -->
+          <button @click="isRouterModalOpen = true" class="flex items-center gap-1.5 bg-surface-container hover:bg-surface-container-high border border-outline-variant text-on-surface px-3 py-1.5 rounded-lg text-xs font-semibold shadow-sm transition-colors cursor-pointer">
+            <span class="material-symbols-outlined text-[16px] text-primary font-semibold">settings_ethernet</span>
+            Router API
+          </button>
         </div>
         <div @click="handleLogout" class="w-8 h-8 rounded-full bg-surface-container border border-outline-variant overflow-hidden flex-shrink-0 cursor-pointer hover:border-error transition-colors" title="Logout">
           <img src="https://ui-avatars.com/api/?name=Admin&background=0D8ABC&color=fff" alt="User Profile" class="w-full h-full object-cover" />
@@ -68,20 +73,25 @@ const handleSaveDevice = async (deviceData) => {
 
       <LeafletMap class="flex-1" />
 
-      <!-- Big Add Button (Bottom Right) -->
+      <!-- Big Add Button (Bottom Right) - Bulat Keren -->
       <button 
         v-if="store.mapMode === 'VIEW'"
         @click="store.startAddDevice()"
-        class="absolute bottom-6 right-6 z-20 flex items-center gap-2 bg-primary hover:bg-primary-fixed text-white px-6 py-4 rounded-full shadow-lg transition-transform hover:scale-105"
+        class="absolute bottom-6 right-6 z-20 w-14 h-14 rounded-full bg-primary hover:bg-primary-fixed text-white flex items-center justify-center shadow-lg transition-all hover:scale-110 active:scale-95 cursor-pointer"
+        title="Tambah Perangkat Baru"
       >
-        <span class="material-symbols-outlined text-2xl">add_location_alt</span>
-        <span class="font-semibold text-lg">Tambah Perangkat</span>
+        <span class="material-symbols-outlined text-[28px] font-bold">add_location_alt</span>
       </button>
     </main>
 
     <!-- Modals -->
     <AddDeviceModal 
       @save="handleSaveDevice"
+    />
+
+    <RouterConfigModal 
+      :is-open="isRouterModalOpen"
+      @close="isRouterModalOpen = false"
     />
   </template>
 </template>

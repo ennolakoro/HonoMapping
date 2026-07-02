@@ -77,3 +77,8 @@ export const clients = sqliteTable("clients", {
   rxPower: text("rx_power"),
   isOnline: integer("is_online", { mode: "boolean" }).default(false)
 });
+
+export const settings = sqliteTable("settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull()
+});

@@ -97,7 +97,7 @@ app.post('/api/auth/login', async (c) => {
 
 import { getPppoeActive, triggerModemCWMP } from './mikrotik'
 import { createInformResponse, createGetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
-import { clients } from './db/schema'
+import { clients, settings } from './db/schema'
 
 // Global state sederhana untuk tracking CWMP session (karena single-user Mini ACS)
 let waitingForEmptyPost = false;
@@ -316,20 +316,31 @@ app.post('/c', cwmpHandler)
 app.post('/cw', cwmpHandler)
 
 // Helper untuk membaca environment bindings baik di Cloudflare Workers maupun Node.js (VPS)
-function getEnv(c: any) {
+async function getEnv(c: any, db: any) {
+  const dbSettings: Record<string, string> = {};
+  try {
+    const rows = await db.select().from(settings);
+    rows.forEach((r: any) => {
+      dbSettings[r.key] = r.value;
+    });
+  } catch (e) {
+    console.error("Gagal membaca settings dari DB:", e);
+  }
+  
   const env = c.env || {};
   return {
-    MIKROTIK_IP: env.MIKROTIK_IP || (typeof process !== 'undefined' ? process.env.MIKROTIK_IP : ''),
-    MIKROTIK_USER: env.MIKROTIK_USER || (typeof process !== 'undefined' ? process.env.MIKROTIK_USER : ''),
-    MIKROTIK_PASS: env.MIKROTIK_PASS || (typeof process !== 'undefined' ? process.env.MIKROTIK_PASS : ''),
-    MIKROTIK_BRIDGE_URL: env.MIKROTIK_BRIDGE_URL || (typeof process !== 'undefined' ? process.env.MIKROTIK_BRIDGE_URL : '')
+    MIKROTIK_IP: dbSettings.MIKROTIK_IP || env.MIKROTIK_IP || (typeof process !== 'undefined' ? process.env.MIKROTIK_IP : ''),
+    MIKROTIK_USER: dbSettings.MIKROTIK_USER || env.MIKROTIK_USER || (typeof process !== 'undefined' ? process.env.MIKROTIK_USER : ''),
+    MIKROTIK_PASS: dbSettings.MIKROTIK_PASS || env.MIKROTIK_PASS || (typeof process !== 'undefined' ? process.env.MIKROTIK_PASS : ''),
+    MIKROTIK_BRIDGE_URL: dbSettings.MIKROTIK_BRIDGE_URL || env.MIKROTIK_BRIDGE_URL || (typeof process !== 'undefined' ? process.env.MIKROTIK_BRIDGE_URL : '')
   };
 }
 
 // Endpoint untuk Vue 3 (Memicu Modem secara Real-time)
 app.post('/api/protected/modem/:ip/sync', async (c) => {
   const modemIp = c.req.param('ip')
-  const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = getEnv(c)
+  const db = getDb(c.env)
+  const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
   
   try {
     // Menyuruh Mikrotik "mencolek" modem
@@ -380,7 +391,8 @@ app.get('/api/protected/devices', async (c) => {
 // Endpoint Mikrotik Real-Time
 app.get('/api/protected/mikrotik/pppoe-status', async (c) => {
   try {
-    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = getEnv(c)
+    const db = getDb(c.env)
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
     
     if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
       return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi di server' }, 500)
@@ -448,7 +460,7 @@ app.get('/api/network-topology', (c) => {
 app.post('/api/sync-real-mikrotik', async (c) => {
   try {
     const db = getDb(c.env)
-    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = getEnv(c)
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
     
     if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
       return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi di .dev.vars' }, 500)
@@ -614,4 +626,109 @@ app.post('/api/clear', async (c) => {
   }
 })
 
+// GET Router Settings
+app.get('/api/protected/settings', async (c) => {
+  const db = getDb(c.env)
+  try {
+    const rows = await db.select().from(settings)
+    const config: Record<string, string> = {}
+    rows.forEach((r: any) => {
+      config[r.key] = r.value
+    })
+    return c.json(config)
+  } catch (e: any) {
+    return c.json({ error: 'Gagal mengambil konfigurasi', details: e.message }, 500)
+  }
+})
+
+// POST Router Settings (Save/Update)
+app.post('/api/protected/settings', async (c) => {
+  const db = getDb(c.env)
+  const body = await c.req.json()
+  
+  try {
+    const keys = ['MIKROTIK_IP', 'MIKROTIK_USER', 'MIKROTIK_PASS', 'MIKROTIK_BRIDGE_URL']
+    for (const key of keys) {
+      if (body[key] !== undefined) {
+        await db.insert(settings).values({
+          key,
+          value: String(body[key])
+        }).onConflictDoUpdate({
+          target: settings.key,
+          set: { value: String(body[key]) }
+        })
+      }
+    }
+    return c.json({ success: true, message: 'Konfigurasi Mikrotik berhasil disimpan' })
+  } catch (e: any) {
+    return c.json({ error: 'Gagal menyimpan konfigurasi', details: e.message }, 500)
+  }
+})
+
+// POST Update Parent (Edit Jalur Kabel)
+app.post('/api/protected/devices/:id/update-parent', async (c) => {
+  const id = parseInt(c.req.param('id'), 10)
+  const body = await c.req.json()
+  const parentId = body.parentId ? parseInt(body.parentId, 10) : null
+  const type = body.type
+  const db = getDb(c.env)
+  
+  try {
+    if (type === 'CLIENT') {
+      const dbId = id >= 1000000 ? id - 1000000 : id
+      await db.update(clients)
+        .set({ odpId: parentId })
+        .where(eq(clients.id, dbId))
+    } else {
+      await db.update(devices)
+        .set({ parentId: parentId })
+        .where(eq(devices.id, id))
+    }
+    return c.json({ success: true, message: 'Jalur kabel berhasil diperbarui' })
+  } catch (e: any) {
+    return c.json({ error: 'Gagal merubah jalur kabel', details: e.message }, 500)
+  }
+})
+
+// POST Update Device/Client Details
+app.post('/api/protected/devices/:id/update', async (c) => {
+  const id = parseInt(c.req.param('id'), 10)
+  const body = await c.req.json()
+  const db = getDb(c.env)
+  
+  try {
+    if (body.type === 'CLIENT') {
+      const dbId = id >= 1000000 ? id - 1000000 : id
+      await db.update(clients)
+        .set({
+          name: body.name,
+          pppoeUsername: body.pppoeUsername || null,
+          snModem: body.snModem || null,
+          wifiSsid: body.wifiSsid || null,
+          wifiPassword: body.wifiPassword || null,
+          wifiSsid5g: body.wifiSsid5g || null,
+          wifiPassword5g: body.wifiPassword5g || null,
+          rxPower: body.rxPower || null,
+          lat: body.lat ? parseFloat(body.lat) : null,
+          lng: body.lng ? parseFloat(body.lng) : null,
+        })
+        .where(eq(clients.id, dbId))
+    } else {
+      await db.update(devices)
+        .set({
+          name: body.name,
+          lat: body.lat ? parseFloat(body.lat) : null,
+          lng: body.lng ? parseFloat(body.lng) : null,
+          capacity: body.capacity ? parseInt(body.capacity, 10) : null,
+          portsCount: body.portsCount ? parseInt(body.portsCount, 10) : null,
+        })
+        .where(eq(devices.id, id))
+    }
+    return c.json({ success: true, message: 'Detail perangkat berhasil diperbarui' })
+  } catch (e: any) {
+    return c.json({ error: 'Gagal memperbarui detail perangkat', details: e.message }, 500)
+  }
+})
+
 export default app
+

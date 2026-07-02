@@ -74,5 +74,54 @@ export const api = {
     });
     if (!res.ok) throw new Error('Gagal sync modem');
     return res.json();
+  },
+
+  async getSettings() {
+    const res = await fetch(`${API_URL}/protected/settings`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    if (!res.ok) throw new Error('Gagal mengambil konfigurasi');
+    return res.json();
+  },
+
+  async saveSettings(settingsData) {
+    const res = await fetch(`${API_URL}/protected/settings`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(settingsData)
+    });
+    if (!res.ok) throw new Error('Gagal menyimpan konfigurasi');
+    return res.json();
+  },
+
+  async updateDeviceParent(id, parentId, type) {
+    const res = await fetch(`${API_URL}/protected/devices/${id}/update-parent`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ parentId, type })
+    });
+    if (!res.ok) throw new Error('Gagal memperbarui jalur kabel');
+    return res.json();
+  },
+
+  async updateDevice(id, deviceData) {
+    const res = await fetch(`${API_URL}/protected/devices/${id}/update`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(deviceData)
+    });
+    if (!res.ok) throw new Error('Gagal memperbarui detail perangkat');
+    return res.json();
   }
 };
