@@ -66,12 +66,30 @@ const loadDevices = async () => {
         // Popup HTML dengan tombol "Tambah Kabel" (kecuali untuk client yang merupakan ujung tombak)
         // Popup HTML dengan tombol "Tambah Kabel" dan "Lihat Detail"
         const popupHtml = `
-          <div class="text-sm pb-1 min-w-[150px]">
-            <b class="text-base text-gray-800 block mb-1">${device.name}</b>
-            <span class="text-gray-500 block mb-2 font-medium">Tipe: ${device.type}</span>
-            <div class="flex flex-col gap-1.5 mt-2">
-              <button onclick="window.dispatchEvent(new CustomEvent('lihat-detail', {detail: '${device.id}'}))" class="bg-blue-500 text-white px-3 py-1.5 rounded-lg text-xs w-full hover:bg-blue-600 transition-colors shadow-sm cursor-pointer border-none font-semibold">🔍 Lihat Detail & Alur</button>
-              ${device.type !== 'CLIENT' ? `<button onclick="window.dispatchEvent(new CustomEvent('tambah-kabel', {detail: '${device.id}'}))" class="bg-orange-500 text-white px-3 py-1.5 rounded-lg text-xs w-full hover:bg-orange-600 transition-colors shadow-sm cursor-pointer border-none font-semibold">🔗 Tarik Kabel Baru</button>` : ''}
+          <div class="p-1 min-w-[170px] font-sans">
+            <div class="flex items-center gap-2 mb-1.5">
+              <span class="w-3 h-3 rounded-full flex-shrink-0 ${
+                device.type === 'OLT' ? 'bg-blue-500' :
+                device.type === 'ODC' ? 'bg-purple-500' :
+                device.type === 'ODP' ? 'bg-orange-500' : 'bg-green-500'
+              }"></span>
+              <span class="font-bold text-slate-800 text-sm tracking-tight truncate block max-w-[140px]">${device.name}</span>
+            </div>
+            <div class="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3">
+              Tipe: ${device.type}
+            </div>
+            <div class="flex flex-col gap-2 mt-2">
+              <button onclick="window.dispatchEvent(new CustomEvent('lihat-detail', {detail: '${device.id}'}))" 
+                      class="flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded-lg text-xs w-full shadow-sm cursor-pointer border-none font-bold transition-all transform active:scale-95">
+                <span class="material-symbols-outlined text-[14px] font-bold">search</span>
+                Lihat Detail & Alur
+              </button>
+              ${device.type !== 'CLIENT' ? `
+              <button onclick="window.dispatchEvent(new CustomEvent('tambah-kabel', {detail: '${device.id}'}))" 
+                      class="flex items-center justify-center gap-1.5 bg-amber-600 hover:bg-amber-700 text-white px-3 py-2 rounded-lg text-xs w-full shadow-sm cursor-pointer border-none font-bold transition-all transform active:scale-95">
+                <span class="material-symbols-outlined text-[14px] font-bold">cable</span>
+                Tarik Kabel Baru
+              </button>` : ''}
             </div>
           </div>
         `

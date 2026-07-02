@@ -80,13 +80,20 @@ const devicePath = computed(() => {
 
 // LAN Ports Status parser
 const lanPortsList = computed(() => {
-  if (!props.device?.lanStatus) return []
+  if (!props.device?.lanStatus) {
+    return [
+      { name: 'LAN 1', isUp: false, speed: 'Disconnected' },
+      { name: 'LAN 2', isUp: false, speed: 'Disconnected' },
+      { name: 'LAN 3', isUp: false, speed: 'Disconnected' },
+      { name: 'LAN 4', isUp: false, speed: 'Disconnected' }
+    ]
+  }
   return props.device.lanStatus.split(',').map(p => {
     const parts = p.trim().split(':');
     if (parts.length < 2) return null;
     const name = parts[0];
     const statusSpeed = parts[1];
-    const isUp = statusSpeed.toLowerCase().includes('up');
+    const isUp = statusSpeed.toLowerCase().includes('up') || statusSpeed.toLowerCase().includes('link');
     let speed = 'Down';
     if (isUp) {
       const speedMatch = statusSpeed.match(/\((.*?)\)/);
@@ -94,6 +101,8 @@ const lanPortsList = computed(() => {
       if (speed === '1000Mbps' || speed === '1Gbps') speed = '1 Gbps';
       else if (speed === '100Mbps') speed = '100 Mbps';
       else if (speed === '10Mbps') speed = '10 Mbps';
+    } else {
+      speed = 'Disconnected';
     }
     return { name, isUp, speed };
   }).filter(Boolean);
@@ -208,6 +217,8 @@ const handleSyncWifi = async () => {
     isLoadingWifi.value = false
   }
 }
+</script>
+
 <template>
   <div v-if="isOpen" class="fixed inset-0 z-[100] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
     <div class="bg-surface-container-lowest p-6 rounded-2xl shadow-xl w-full max-w-lg border border-outline-variant max-h-[90vh] overflow-y-auto">
@@ -380,10 +391,23 @@ const handleSyncWifi = async () => {
         <!-- UI layout for CLIENT (Gorgeous Modem Detail Dashboard) -->
         <div v-else class="flex flex-col gap-4">
           <!-- Real-Time Metrics -->
-          <div v-if="device.wifiSsid || device.rxPower || device.lanStatus" class="bg-surface-container-low p-4 rounded-xl border border-outline-variant shadow-sm">
+          <div class="bg-surface-container-low p-4 rounded-xl border border-outline-variant shadow-sm">
             <h4 class="font-bold text-on-surface mb-3 flex items-center gap-2">
               <span class="material-symbols-outlined text-green-500">analytics</span> Metrik Real-Time (Modem)
             </h4>
+            
+            <!-- Warning Metrik Belum Sinkron -->
+            <div v-if="!device.rxPower && !device.wifiSsid" class="bg-amber-500/10 text-amber-700 border border-amber-500/30 p-3 rounded-xl flex gap-2.5 text-xs leading-relaxed mb-4">
+              <span class="material-symbols-outlined text-[20px] flex-shrink-0 text-amber-600 font-bold">warning</span>
+              <div>
+                <strong class="font-bold text-amber-800 block text-xs mb-0.5">⚠️ Metrik Belum Tersinkronisasi</strong>
+                <span class="opacity-90">Modem ini terdaftar namun belum menerima data sensor TR-069. Silakan ikuti langkah troubleshooting berikut:</span>
+                <ol class="list-decimal pl-4 mt-1.5 space-y-1 opacity-90 font-medium">
+                  <li>Klik tombol <strong>Tarik Data</strong> PPPoE di bawah untuk mendeteksi IP modem.</li>
+                  <li>Klik tombol <strong>Force Inform</strong> untuk memicu modem agar memperbarui data.</li>
+                </ol>
+              </div>
+            </div>
             
             <!-- Grid Metrik Utama -->
             <div class="grid grid-cols-2 gap-3 mb-4">
