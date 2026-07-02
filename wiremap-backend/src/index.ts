@@ -88,7 +88,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, triggerModemCWMP } from './mikrotik'
-import { createInformResponse, createGetParameterValues, parseInform, parseGetParameterValuesResponse } from './cwmp'
+import { createInformResponse, createGetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
 import { clients } from './db/schema'
 
 // Global state sederhana untuk tracking CWMP session (karena single-user Mini ACS)
@@ -97,6 +97,7 @@ let currentModemSN = '';
 let currentCwmpId = '';
 let currentCwmpNamespace = '';
 let currentParamsToRequest: string[] = [];
+let gponFaultRetried = false; // Tandai sudah retry tanpa GPON param
 
 // Endpoint Mini ACS (Terbuka untuk Modem / CPE)
 const cwmpHandler = async (c: any) => {
@@ -122,6 +123,7 @@ const cwmpHandler = async (c: any) => {
       currentModemSN = informData.SerialNumber;
       currentCwmpId = informData.cwmpId || '';
       currentCwmpNamespace = informData.cwmpNamespace || 'urn:dslforum-org:cwmp-1-0';
+      gponFaultRetried = false; // Reset retry flag untuk sesi baru
       waitingForEmptyPost = true; // Tandai bahwa kita menunggu empty POST
       
       // Deteksi vendor berdasarkan OUI
@@ -211,11 +213,34 @@ const cwmpHandler = async (c: any) => {
     return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
   }
 
-  // Jika modem mengirim Fault (9005, dll) - log dan akhiri sesi dengan baik
+  // Jika modem mengirim Fault 9005 (parameter tidak valid)
   if (bodyText.includes('Fault') || bodyText.includes('fault')) {
-    console.log(`[CWMP] Modem mengirim Fault - sesi diakhiri. Body:\n${bodyText}`)
+    const faultCode = (bodyText.match(/<FaultCode>(\d+)<\/FaultCode>/) || [])[1] || '?';
+    console.log(`[CWMP] Modem mengirim Fault ${faultCode}`)
+    
+    // Jika 9005 (invalid param) dan belum pernah retry → coba lagi tanpa parameter GPON
+    if (faultCode === '9005' && !gponFaultRetried && currentModemSN) {
+      gponFaultRetried = true;
+      const baseParams = [
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+      ];
+      console.log(`[CWMP] Retry tanpa parameter GPON - minta SSID+Password saja`);
+      const retryXml = createGetParameterValues(currentCwmpId, currentCwmpNamespace, baseParams);
+      return new Response(retryXml, {
+        headers: {
+          'Content-Type': 'text/xml',
+          'Server': 'Hono-MiniACS',
+          'Set-Cookie': 'session=1; Path=/; HttpOnly'
+        }
+      })
+    }
+    
+    // Fault lain atau sudah retry → akhiri sesi
+    console.log(`[CWMP] Sesi diakhiri karena Fault.`)
     currentModemSN = ''
     waitingForEmptyPost = false
+    gponFaultRetried = false
     return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
   }
   

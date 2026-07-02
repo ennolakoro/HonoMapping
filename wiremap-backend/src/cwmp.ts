@@ -37,7 +37,23 @@ ${paramsXml}
 </soap-env:Envelope>`;
 }
 
-// Ekstrak parameter dari pesan Inform (Event, OUI, SerialNumber)
+// Kirim GetParameterNames untuk menemukan semua nama parameter yang didukung modem
+export function createGetParameterNames(cwmpId: string = '99998', cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0', paramPath: string = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.') {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cwmp="${cwmpNamespace}">
+  <soap-env:Header>
+    <cwmp:ID soap-env:mustUnderstand="1">${cwmpId}</cwmp:ID>
+  </soap-env:Header>
+  <soap-env:Body>
+    <cwmp:GetParameterNames>
+      <ParameterPath>${paramPath}</ParameterPath>
+      <NextLevel>false</NextLevel>
+    </cwmp:GetParameterNames>
+  </soap-env:Body>
+</soap-env:Envelope>`;
+}
+
+
 export function parseInform(xmlString: string) {
   const getTagValue = (xml: string, tag: string) => {
     const match = xml.match(new RegExp(`<${tag}>(.*?)</${tag}>`));
