@@ -128,15 +128,26 @@ const cwmpHandler = async (c: any) => {
       const isHuawei = informData.OUI === '00259E' || (informData.OUI && informData.OUI.toUpperCase().includes('HW'));
       const isZte = informData.OUI === '00200A' || (informData.OUI && informData.OUI.toUpperCase().includes('ZTE'));
       
-      currentParamsToRequest = [
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey'
-      ];
-      
+      // Minta parameter satu per satu per vendor - hindari 9005 karena request batched
       if (isHuawei) {
-        currentParamsToRequest.push('InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower');
+        currentParamsToRequest = [
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+          // Coba beberapa path Huawei GPON yang umum (EG8145V5 / HG8245)
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower',
+        ];
       } else if (isZte) {
-        currentParamsToRequest.push('InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower');
+        currentParamsToRequest = [
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
+        ];
+      } else {
+        // Unknown vendor - minta SSID/Password saja, tidak ada parameter GPON
+        currentParamsToRequest = [
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+        ];
       }
       
       try {
@@ -190,17 +201,26 @@ const cwmpHandler = async (c: any) => {
             rxPower: params.rxPower || undefined
           })
           .where(eq(clients.snModem, currentModemSN))
+        console.log(`[DB] Data modem ${currentModemSN} berhasil diupdate: SSID=${params.ssid}, RxPower=${params.rxPower}`)
       } catch (e) {
         console.error("Gagal update parameter ke DB:", e)
       }
     }
     
-    // Akhiri sesi dengan empty response 204
-    return new Response('', { status: 204 }) 
+    // Akhiri sesi dengan HTTP 200 kosong (204 tidak didukung @hono/node-server di Node v20)
+    return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+  }
+
+  // Jika modem mengirim Fault (9005, dll) - log dan akhiri sesi dengan baik
+  if (bodyText.includes('Fault') || bodyText.includes('fault')) {
+    console.log(`[CWMP] Modem mengirim Fault - sesi diakhiri. Body:\n${bodyText}`)
+    currentModemSN = ''
+    waitingForEmptyPost = false
+    return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
   }
   
   // Jika format lain atau empty POST di luar sesi
-  return new Response('', { status: 204 })
+  return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
 }
 
 app.post('/cwmp', cwmpHandler)
