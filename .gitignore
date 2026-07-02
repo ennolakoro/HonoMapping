@@ -1,0 +1,12 @@
+node_modules/
+.dev.vars
+.env
+dist/
+.wrangler/
+.cf/
+ngrok.exe
+ngrok-v3-stable-windows-amd64.zip
+screen.png
+*.log
+.idea/
+.vscode/

@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+
+<html lang="en" style=""><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=block" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet"/>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+try{
+    tailwind.config = {
+        darkMode: "class",
+        theme: {
+            extend: {
+                "colors": {
+                    "surface-container-high": "#e2e8f0",
+                    "on-background": "#1e293b",
+                    "tertiary-fixed": "#ecdcff",
+                    "background": "#f8fafc",
+                    "tertiary-container": "#b88eff",
+                    "error-container": "#ffdad6",
+                    "inverse-primary": "#a2c9ff",
+                    "on-primary-fixed-variant": "#004882",
+                    "surface": "#f9f9ff",
+                    "error": "#ba1a1a",
+                    "secondary-fixed": "#83fc89",
+                    "secondary": "#006d3a",
+                    "on-primary": "#ffffff",
+                    "outline-variant": "#cbd5e1",
+                    "tertiary": "#6b4fa3",
+                    "surface-container": "#f1f5f9",
+                    "inverse-on-surface": "#f1f5f9",
+                    "surface-tint": "#0060aa",
+                    "primary-fixed": "#d3e4ff",
+                    "on-tertiary-fixed-variant": "#5a21ab",
+                    "tertiary-fixed-dim": "#d5bbff",
+                    "surface-variant": "#e2e8f0",
+                    "surface-container-highest": "#cbd5e1",
+                    "on-secondary-fixed": "#002105",
+                    "on-secondary-container": "#00210a",
+                    "on-error-container": "#410002",
+                    "on-primary-fixed": "#001c38",
+                    "primary": "#0060aa",
+                    "outline": "#64748b",
+                    "on-secondary": "#ffffff",
+                    "surface-container-low": "#f8fafc",
+                    "surface-bright": "#ffffff",
+                    "on-tertiary-container": "#270058",
+                    "surface-dim": "#e2e8f0",
+                    "primary-container": "#d3e4ff",
+                    "on-error": "#ffffff",
+                    "secondary-container": "#93f89d",
+                    "inverse-surface": "#1e293b",
+                    "primary-fixed-dim": "#a2c9ff",
+                    "on-tertiary-fixed": "#270058",
+                    "on-tertiary": "#ffffff",
+                    "on-primary-container": "#001c38",
+                    "on-surface-variant": "#475569",
+                    "surface-container-lowest": "#ffffff",
+                    "on-surface": "#1e293b",
+                    "on-secondary-fixed-variant": "#005317",
+                    "secondary-fixed-dim": "#67df70"
+                },
+                "borderRadius": {
+                    "DEFAULT": "0.125rem",
+                    "lg": "0.25rem",
+                    "xl": "0.5rem",
+                    "full": "0.75rem"
+                },
+                "spacing": {
+                    "gutter": "16px",
+                    "unit": "4px",
+                    "density-tight": "8px",
+                    "container-padding": "24px",
+                    "sidebar-collapsed": "64px",
+                    "sidebar-width": "280px",
+                    "density-comfy": "16px"
+                },
+                "fontFamily": {
+                    "label-caps": ["Inter"],
+                    "body-sm": ["Inter"],
+                    "data-mono": ["JetBrains Mono"],
+                    "display-lg": ["Inter"],
+                    "body-md": ["Inter"],
+                    "headline-md": ["Inter"]
+                },
+                "fontSize": {
+                    "label-caps": ["11px", { "lineHeight": "16px", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                    "body-sm": ["12px", { "lineHeight": "18px", "fontWeight": "400" }],
+                    "data-mono": ["13px", { "lineHeight": "16px", "fontWeight": "500" }],
+                    "display-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                    "body-md": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                    "headline-md": ["20px", { "lineHeight": "28px", "fontWeight": "600" }]
+                }
+            }
+        }
+    }
+}catch(_e){}
+</script>
+<link crossorigin="" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" rel="stylesheet"/>
+<script class="" crossorigin="" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+</head>
+<body class="bg-surface-container-lowest text-on-surface flex flex-col h-screen w-full overflow-hidden font-body-md text-body-md">
+<!-- TopNavBar (Comprehensive Header) -->
+<header class="bg-surface-container-lowest border-b border-outline-variant flex justify-between items-center px-gutter w-full h-16 z-30 flex-shrink-0">
+<div class="flex items-center gap-6">
+<div class="flex items-center gap-2">
+<span class="material-symbols-outlined text-primary text-2xl" data-icon="device_hub" data-original-icon="device_hub">device_hub</span>
+<h1 class="font-headline-md text-headline-md text-primary tracking-tight">WireMap GIS</h1>
+</div>
+<!-- Navigation Links Moved to Header -->
+<nav class="hidden md:flex items-center gap-1 ml-4">
+<a class="px-4 py-2 rounded-lg bg-surface-container-high text-primary font-medium flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="map" style="font-variation-settings: 'FILL' 1;">map</span>
+    Dashboard
+</a>
+<a class="px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors font-medium flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="router">router</span>
+    Devices
+</a>
+<a class="px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors font-medium flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="group">group</span>
+    Clients
+</a>
+<a class="px-4 py-2 rounded-lg text-on-surface-variant hover:bg-surface-container hover:text-on-surface transition-colors font-medium flex items-center gap-2" href="#">
+<span class="material-symbols-outlined text-[20px]" data-icon="settings">settings</span>
+    Settings
+</a>
+<button class="px-4 py-2 rounded-lg bg-primary text-white hover:bg-primary-fixed transition-colors font-medium flex items-center gap-2 shadow-sm ml-2" onclick="document.getElementById('add-device-modal').classList.remove('hidden')"><span class="material-symbols-outlined text-[20px]">add_circle</span>Tambah Perangkat</button></nav>
+</div>
+<div class="flex-1 flex justify-center max-w-md px-4 hidden lg:flex">
+<div class="w-full relative focus-within:ring-1 focus-within:ring-primary rounded-lg transition-all">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant" data-icon="search">search</span>
+<input class="w-full bg-surface-container-low border border-outline-variant text-on-surface placeholder-on-surface-variant rounded-lg pl-10 pr-4 py-2 font-body-sm text-body-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary shadow-sm" placeholder="Search devices, IP, or clients..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 border-r border-outline-variant pr-4">
+<button class="p-2 text-on-surface-variant hover:text-primary hover:bg-surface-container rounded-lg transition-all flex items-center justify-center">
+<span class="material-symbols-outlined" data-icon="sync">sync</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:text-primary hover:bg-surface-container rounded-lg transition-all flex items-center justify-center relative">
+<span class="material-symbols-outlined" data-icon="layers">layers</span>
+<span class="absolute top-1.5 right-1.5 w-2 h-2 bg-primary rounded-full"></span>
+</button>
+<!-- -->
+<button class="flex items-center gap-2 px-3 py-1.5 bg-surface-container-lowest border border-outline-variant hover:border-primary hover:text-primary text-on-surface-variant rounded-lg transition-colors ml-2 shadow-sm">
+<span class="material-symbols-outlined text-[20px]" data-icon="person_search">person_search</span>
+<span class="font-body-sm text-body-sm font-medium">Find Client</span>
+</button>
+</div>
+<div class="w-8 h-8 rounded-full bg-surface-container border border-outline-variant overflow-hidden flex-shrink-0 cursor-pointer">
+<img alt="User Profile" class="w-full h-full object-cover" data-alt="A small circular avatar image showing a professional network administrator working in a dimly lit server room. High contrast, cool tones." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAhNScohm_yPUDI37D3rO-lxSbTGUjVASPCUdzFasTNlrsshtNQntFaQp9cAshMyJtP2F-9bKKuce2zGchMn-cZhn0x4atcfPlKuEcCTlK3qgQwUOZgLGmbNQzSNdvH06_alBH__DlzAb3erx_0meLTjatLCC3Zls5SQXWP7eTc8t9mPfjMa6HMvs-SrWKG2UczWJMukMSLIoM-KF4NSfxugpA3R12PMDlLt9tPe560XSHqFCkVNxoKT8atLkML6VjzJHITAVcGTmZh"/>
+</div>
+</div>
+</header>
+<!-- Main Content Area -->
+<main class="flex-1 min-w-0 relative h-full">
+<!-- GIS Map Canvas (Full Screen) -->
+<div class="absolute inset-0 bg-surface-container-low overflow-hidden group z-0">
+<div class="absolute inset-0 w-full h-full z-0 bg-surface-container-low" id="map">
+<img alt="GIS Light Map Background" class="w-full h-full object-cover opacity-60 invert hue-rotate-180 contrast-125" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCBZH96bLYmD_I6GGlT9T2-9byJ3CfTjrc_opQzrCrJnalXXPruMfvuBH_V4B7J9yvkGxs3aJgHWfVGfjEDmwI98ivKswZPq3nbXSFgQ7m3qSyGYLElZinh0Urpl_cr1iDFVgzaLPx8I28xS-PSY_lOvBAL8nsj-Wt5-1ggYzDuBxZuHYbz5kSKt4vW0Pn0el4zlZtYH9Epet5hkT43TbJF2O_02Nfh1iLZr3ZuV0JWgrx4FMJNCtK_bDTngHzPKyy-lPNC1NnYj0Iu"/>
+<div class="absolute inset-0 bg-gradient-to-b from-white/10 to-white/60 pointer-events-none"></div>
+</div>
+<svg class="absolute inset-0 w-full h-full pointer-events-none z-0 z-10" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<filter height="140%" id="glow-blue" width="140%" x="-20%" y="-20%">
+<fegaussianblur result="blur" stddeviation="2"></fegaussianblur>
+<fecomposite in="SourceGraphic" in2="blur" operator="over"></fecomposite>
+</filter>
+<filter height="140%" id="glow-yellow" width="140%" x="-20%" y="-20%">
+<fegaussianblur result="blur" stddeviation="1.5"></fegaussianblur>
+<fecomposite in="SourceGraphic" in2="blur" operator="over"></fecomposite>
+</filter>
+</defs>
+<!-- OLT to ODC: Thicker Blue Lines -->
+<path d="M 100 200 L 400 350" fill="none" filter="url(#glow-blue)" opacity="0.9" stroke="#0060aa" stroke-width="3"></path>
+<path d="M 100 200 L 250 500" fill="none" filter="url(#glow-blue)" opacity="0.8" stroke="#0060aa" stroke-width="3"></path>
+<!-- ODC to ODP: Thinner Dashed Lines -->
+<path d="M 400 350 L 550 300" fill="none" filter="url(#glow-yellow)" opacity="0.8" stroke="#d97706" stroke-dasharray="4 4" stroke-width="2"></path>
+<path d="M 400 350 L 600 450" fill="none" filter="url(#glow-yellow)" opacity="0.8" stroke="#d97706" stroke-dasharray="4 4" stroke-width="2"></path>
+<path d="M 250 500 L 150 650" fill="none" filter="url(#glow-yellow)" opacity="0.8" stroke="#d97706" stroke-dasharray="4 4" stroke-width="2"></path>
+<!-- Active Signal Animation (Moving Dot) -->
+<circle fill="#0060aa" r="3">
+<animatemotion dur="3s" path="M 100 200 L 400 350" repeatcount="indefinite"></animatemotion>
+</circle>
+<circle fill="#0060aa" r="3">
+<animatemotion dur="4s" path="M 100 200 L 250 500" repeatcount="indefinite"></animatemotion>
+</circle>
+<!-- OLT Node -->
+<g cursor="pointer" transform="translate(100, 200)"><title>OLT (Server Rack)</title><foreignobject height="40" width="40" x="-20" y="-20"><div class="w-full h-full drop-shadow-md flex items-center justify-center"><img class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBMkoCeVNBmSWn8jGmJiXf7iYElLBNNZBbfg8t1CP47oeVFHPOyU2wnthjOBbQn4_Gxe8-HQpIpiJQ2iRRTRKzvOBnsKqtMhsYF-TPHE2ZpJGI8Q_xxAWMcuXHOjO-CGsdnE1R9HKHt-2lLlf9TGOfVQoLiCBAdJv5CvOosQwcZx3wN_2uypzyDie2cNKglj11eAlTZmhO6JTOodxYDrfmbt4IgT8709mAyikXVsyNUF_VRUiGw4uffO7OIetLCwwy3uVW42wth21Mj"/></div></foreignobject></g>
+<!-- ODC Nodes (Junctions) -->
+<g cursor="pointer" transform="translate(400, 350)"><title>ODC-SU-02 (ODC + Client)</title><foreignobject height="40" width="40" x="-20" y="-20"><div class="w-full h-full drop-shadow-md flex items-center justify-center"><img alt="ODC + Client" class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCvMaHdFjJ-vov72nl9zTMgZSvpNkogAPPtsY9kks-t84TpwJVgMKKVwuEnUYYG_JTuuplcLEePU0Fz2o4YSCJxK5Gq-I1Zl3Hw-dQLaXufNiQqYKEGstjAz87SwZmLoiNAScJZR_kh7gD6i0EsFdYcFU4DOnpNju7IJ5ZULHP3a3h3aeYWgZRhgB7cAXuqDvlCBiz8Q2j8HjG0v-5wBzQUWF6H9KKK1gixhzkjrzAtul1sX4mS3mNQea4B9JCD1OqCNV-4m5XUnLZL"/></div></foreignobject></g>
+<g cursor="pointer" transform="translate(250, 500)"><title>ODP-SU-04-A (Terminal)</title><foreignobject height="40" width="40" x="-20" y="-20"><div class="w-full h-full drop-shadow-sm flex items-center justify-center"><img class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD3lfLmTMj1I0D72RzBBt0eNSmYFFM0YNAeNODcgyey1nKGHNeiMxLx8Hzy8oEEmTyt0ahUmfRs_OXrH5QvoS933BWAPbaWpNxBtzaArWwSQh30bUbnWKzL6oofumPsne7BgA7oX61DrOHCVXy6YcGbQfzAeK0SLxvBVW1vg4DOhoHgunakWzYyIgNLLQ06M3BUMCpToiJkeqyZGsr0sDlG_Ji37yAAp8iJDvBp80tHXMUSbb_HWOQI3w4tIoW_lcTqhBoyUFKKDvLr"/></div></foreignobject></g>
+<!-- ODP Nodes (Terminals) -->
+<g cursor="pointer" transform="translate(550, 300)"><title>ODP-SU-04-B (ODP + Client)</title><foreignobject height="40" width="40" x="-20" y="-20"><div class="w-full h-full drop-shadow-sm flex items-center justify-center"><img alt="ODP + Client" class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7y-FSXoEYAcrBvCg38G3mrut_0ULxIdUfISTxB1dkVptc6Z9pQeXn6yY1j_kOL__WXYQUMGrouse_ubNbrCXZniM_DiCa9lOBO7SmEJ1opxOGWHrbL3WDy1OnX4DMJe7dGFRTfENlEYp-MEHua3EXjS130RSHcei3urN0-qqNlW_T366VWOqq6AKunKNpgRMRTkmMm3GRdfga6fJDJEdWeYOySSk-GuK5HYQ9W211Xpb0E0xCIDDCEuq2JdXmOVW5av88P52H5HZB"/></div></foreignobject></g>
+<g cursor="pointer" transform="translate(600, 450)"><title>ODP-SU-02-A (ODP + Client)</title><foreignobject height="40" width="40" x="-20" y="-20"><div class="w-full h-full drop-shadow-sm flex items-center justify-center"><img alt="ODP + Client" class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7y-FSXoEYAcrBvCg38G3mrut_0ULxIdUfISTxB1dkVptc6Z9pQeXn6yY1j_kOL__WXYQUMGrouse_ubNbrCXZniM_DiCa9lOBO7SmEJ1opxOGWHrbL3WDy1OnX4DMJe7dGFRTfENlEYp-MEHua3EXjS130RSHcei3urN0-qqNlW_T366VWOqq6AKunKNpgRMRTkmMm3GRdfga6fJDJEdWeYOySSk-GuK5HYQ9W211Xpb0E0xCIDDCEuq2JdXmOVW5av88P52H5HZB"/></div></foreignobject></g>
+<g cursor="pointer" transform="translate(150, 650)">
+<title>Client</title>
+<foreignobject height="40" width="40" x="-20" y="-20"><div class="w-full h-full drop-shadow-sm flex items-center justify-center"><img alt="Client" class="w-10 h-10 object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCbat44o7RzMSH8DSADlwGg5l10b0jprQvhA9hpvtGIzmr6D6xEn2oLcdWyk-T-AMTJzdFecQSLNOYhYG54-1JjDCX5jvrlcppUjcaQXRJ7klk8IPHXtyWJs7BVubWHUAiYJFl-SBO78jrjfRMUQ0YXJZXq93JTXnHvn6MWSUTA6HZmKBunfqLEuhm-wGn5MUjK1nocGxZjvLnk-3BlGkog_kTeU1TxlJh7ecqPjxBsAUzNDEx9WOq4srnImgdU0ECaqw91gF_0E_KC"/></div></foreignobject>
+</g></svg>
+<!-- Simulated Map Background -->
+<!-- Grid Overlay to enhance technical feel -->
+<div class="absolute inset-0 w-full h-full pointer-events-none" style="background-image: linear-gradient(rgba(0, 0, 0, 0.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0, 0, 0, 0.05) 1px, transparent 1px); background-size: 64px 64px;"></div>
+<!-- SVG Map Elements -->
+</div>
+<!-- Floating Legend -->
+<div class="absolute bottom-gutter left-gutter bg-surface-container-lowest border border-outline-variant rounded-lg p-density-tight shadow-md bg-opacity-95 z-10 flex items-center gap-4 flex-wrap">
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-sm shadow-sm flex items-center justify-center"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuBMkoCeVNBmSWn8jGmJiXf7iYElLBNNZBbfg8t1CP47oeVFHPOyU2wnthjOBbQn4_Gxe8-HQpIpiJQ2iRRTRKzvOBnsKqtMhsYF-TPHE2ZpJGI8Q_xxAWMcuXHOjO-CGsdnE1R9HKHt-2lLlf9TGOfVQoLiCBAdJv5CvOosQwcZx3wN_2uypzyDie2cNKglj11eAlTZmhO6JTOodxYDrfmbt4IgT8709mAyikXVsyNUF_VRUiGw4uffO7OIetLCwwy3uVW42wth21Mj"/></div>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">OLT</span>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-sm shadow-sm flex items-center justify-center"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCfnZK0U6d2L53mDEmyK5jIctxC6MCFzaMvfW9Kic3QR9y_1q8CP4ixGOmGZg90nCmAS_tko2cLLjIA-aEu4QsZIuP3_Gmk7Sp6iJYdTHga1cWycU_76r9uGzgo5vuKHb2WubfUAdL61OmkOmeFbU5zhVPZuFM-Qu15L6joUgIBOEvm8mUzTptRS4-lOa1R34lInS3LpuUJ4MidjWMJwS4NmgY9og7j8_ml61UrKPtceSxy2KXoBI83a6PANtY9MSLLadYCXcBmqOee"/></div>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">ODC</span>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-sm shadow-sm flex items-center justify-center"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCvMaHdFjJ-vov72nl9zTMgZSvpNkogAPPtsY9kks-t84TpwJVgMKKVwuEnUYYG_JTuuplcLEePU0Fz2o4YSCJxK5Gq-I1Zl3Hw-dQLaXufNiQqYKEGstjAz87SwZmLoiNAScJZR_kh7gD6i0EsFdYcFU4DOnpNju7IJ5ZULHP3a3h3aeYWgZRhgB7cAXuqDvlCBiz8Q2j8HjG0v-5wBzQUWF6H9KKK1gixhzkjrzAtul1sX4mS3mNQea4B9JCD1OqCNV-4m5XUnLZL"/></div>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">ODC + Pelanggan</span>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-sm shadow-sm flex items-center justify-center"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuD3lfLmTMj1I0D72RzBBt0eNSmYFFM0YNAeNODcgyey1nKGHNeiMxLx8Hzy8oEEmTyt0ahUmfRs_OXrH5QvoS933BWAPbaWpNxBtzaArWwSQh30bUbnWKzL6oofumPsne7BgA7oX61DrOHCVXy6YcGbQfzAeK0SLxvBVW1vg4DOhoHgunakWzYyIgNLLQ06M3BUMCpToiJkeqyZGsr0sDlG_Ji37yAAp8iJDvBp80tHXMUSbb_HWOQI3w4tIoW_lcTqhBoyUFKKDvLr"/></div>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">ODP</span>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-sm shadow-sm flex items-center justify-center"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuA7y-FSXoEYAcrBvCg38G3mrut_0ULxIdUfISTxB1dkVptc6Z9pQeXn6yY1j_kOL__WXYQUMGrouse_ubNbrCXZniM_DiCa9lOBO7SmEJ1opxOGWHrbL3WDy1OnX4DMJe7dGFRTfENlEYp-MEHua3EXjS130RSHcei3urN0-qqNlW_T366VWOqq6AKunKNpgRMRTkmMm3GRdfga6fJDJEdWeYOySSk-GuK5HYQ9W211Xpb0E0xCIDDCEuq2JdXmOVW5av88P52H5HZB"/></div>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">ODP + Pelanggan</span>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded-sm shadow-sm flex items-center justify-center"><img class="w-full h-full object-contain" src="https://lh3.googleusercontent.com/aida-public/AB6AXuCbat44o7RzMSH8DSADlwGg5l10b0jprQvhA9hpvtGIzmr6D6xEn2oLcdWyk-T-AMTJzdFecQSLNOYhYG54-1JjDCX5jvrlcppUjcaQXRJ7klk8IPHXtyWJs7BVubWHUAiYJFl-SBO78jrjfRMUQ0YXJZXq93JTXnHvn6MWSUTA6HZmKBunfqLEuhm-wGn5MUjK1nocGxZjvLnk-3BlGkog_kTeU1TxlJh7ecqPjxBsAUzNDEx9WOq4srnImgdU0ECaqw91gF_0E_KC"/></div>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">Pelanggan</span>
+</div>
+<div class="w-px h-4 bg-outline-variant"></div>
+<div class="flex items-center gap-3">
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px] text-secondary" data-icon="home" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">On</span>
+</div>
+<div class="flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[16px] text-error" data-icon="home" style="font-variation-settings: 'FILL' 1;">home</span>
+<span class="font-body-sm text-body-sm text-on-surface-variant font-medium">Off</span>
+</div>
+</div>
+</div>
+<!-- Floating Map Controls -->
+<div class="absolute bottom-gutter right-gutter flex flex-col gap-unit z-10">
+<button class="w-10 h-10 bg-surface-container-lowest border border-outline-variant rounded-t-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors shadow-md">
+<span class="material-symbols-outlined" data-icon="add">add</span>
+</button>
+<button class="w-10 h-10 bg-surface-container-lowest border border-outline-variant rounded-b-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors shadow-md">
+<span class="material-symbols-outlined" data-icon="remove">remove</span>
+</button>
+<button class="mt-2 w-10 h-10 bg-surface-container-lowest border border-outline-variant rounded-lg flex items-center justify-center text-on-surface-variant hover:bg-surface-container hover:text-primary transition-colors shadow-md">
+<span class="material-symbols-outlined" data-icon="my_location">my_location</span>
+</button>
+</div>
+<!-- Floating Client Detail Card -->
+<div class="absolute top-gutter right-gutter w-[360px] bg-surface-container-lowest border border-outline-variant shadow-lg rounded-xl z-20 flex flex-col overflow-hidden">
+<!-- Card Header -->
+<div class="px-5 py-4 border-b border-outline-variant flex items-start justify-between bg-surface-container-low">
+<div class="flex gap-4">
+<div class="w-10 h-10 rounded-lg bg-surface-container border border-outline-variant flex items-center justify-center flex-shrink-0 relative bg-white shadow-sm">
+<span class="material-symbols-outlined text-primary text-xl" data-icon="person">person</span>
+<div class="absolute -bottom-1 -right-1 w-3 h-3 bg-secondary rounded-full border-2 border-surface-container-lowest"></div>
+</div>
+<div>
+<h2 class="font-headline-md text-[18px] text-on-surface leading-tight font-semibold">Budi Santoso</h2>
+<p class="font-data-mono text-data-mono text-on-surface-variant mt-0.5 text-[11px]">+62 812-3456-7890</p>
+</div>
+</div>
+<button class="text-outline hover:text-on-surface transition-colors p-1 rounded-md hover:bg-surface-container">
+<span class="material-symbols-outlined text-[20px]" data-icon="close">close</span>
+</button>
+</div>
+<!-- Card Content -->
+<div class="p-5 flex flex-col gap-5 max-h-[calc(100vh-140px)] overflow-y-auto">
+<!-- Connection Path Context -->
+<div class="flex items-center gap-1.5 text-on-surface-variant font-body-sm text-body-sm flex-wrap">
+<div class="px-1.5 py-0.5 bg-surface-container rounded border border-outline-variant font-data-mono text-[10px] text-on-surface">OLT-CEN-01</div>
+<span class="material-symbols-outlined text-[12px]" data-icon="chevron_right">chevron_right</span>
+<div class="px-1.5 py-0.5 bg-surface-container rounded border border-outline-variant font-data-mono text-[10px] text-on-surface">ODC-SU-04</div>
+<span class="material-symbols-outlined text-[12px]" data-icon="chevron_right">chevron_right</span>
+<div class="px-1.5 py-0.5 bg-primary-container rounded border border-primary text-primary font-data-mono text-[10px] font-bold">ODP-SU-04-A</div>
+</div>
+<!-- Diagnostics Bento Grid -->
+<div class="grid grid-cols-2 gap-2">
+<!-- Stat Card 1 -->
+<div class="bg-surface-container-low border border-outline-variant rounded-lg p-2.5 flex flex-col shadow-sm">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1 uppercase text-[10px]">IP WAN</span>
+<span class="font-data-mono text-data-mono text-on-surface tracking-wide font-semibold">10.124.55.2</span>
+</div>
+<!-- Stat Card 2 -->
+<div class="bg-surface-container-low border border-outline-variant rounded-lg p-2.5 flex flex-col shadow-sm">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1 uppercase text-[10px]">PPPoE User</span>
+<span class="font-data-mono text-data-mono text-on-surface truncate font-semibold" title="budi.santoso@net">budi.s@net</span>
+</div>
+<!-- Stat Card 3 -->
+<div class="bg-surface-container-low border border-outline-variant rounded-lg p-2.5 flex flex-col shadow-sm">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1 uppercase text-[10px]">Uptime</span>
+<span class="font-data-mono text-data-mono text-on-surface font-semibold">12d 4h 23m</span>
+</div>
+<!-- Stat Card 4 (Highlighted) -->
+<div class="bg-secondary-container bg-opacity-30 border border-secondary rounded-lg p-2.5 flex flex-col relative overflow-hidden shadow-sm">
+<div class="absolute top-0 right-0 w-6 h-6 bg-secondary opacity-10 rounded-bl-full"></div>
+<span class="font-label-caps text-label-caps text-secondary mb-1 uppercase flex items-center gap-1 text-[10px]">
+                                RX OLT 
+                                <span class="material-symbols-outlined text-[10px]" data-icon="check_circle">check_circle</span>
+</span>
+<div class="flex items-baseline gap-1">
+<span class="font-data-mono text-data-mono text-secondary text-base font-bold">-23.4</span>
+<span class="font-data-mono text-data-mono text-secondary text-[9px] opacity-80 font-bold">dBm</span>
+</div>
+</div>
+</div>
+<!-- Remote Actions -->
+<div class="pt-2 flex flex-col gap-2.5">
+<h3 class="font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider mb-0.5">Remote Control</h3>
+<button class="w-full py-2 px-4 bg-primary hover:bg-primary-fixed text-white font-body-md text-[13px] font-medium rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm">
+<span class="material-symbols-outlined text-[16px]" data-icon="wifi_protected_setup">wifi_protected_setup</span>
+                            Ubah Wi-Fi
+                        </button>
+</div></div></div></main>
+<div class="hidden fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm" id="add-device-modal"><div class="bg-surface-container-lowest border border-outline-variant w-full max-w-md rounded-xl shadow-lg overflow-hidden flex flex-col"><div class="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-low"><h3 class="font-headline-md text-headline-md text-on-surface">Tambah Perangkat Baru</h3><button class="text-on-surface-variant hover:text-on-surface p-1 rounded-md hover:bg-surface-container" onclick="document.getElementById('add-device-modal').classList.add('hidden')"><span class="material-symbols-outlined">close</span></button></div><form class="p-6 flex flex-col gap-4"><div class="flex flex-col gap-1.5"><label class="text-label-caps text-on-surface-variant uppercase">Tipe Perangkat</label><select class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary focus:border-primary outline-none"><option>OLT</option><option>ODC</option><option>ODP</option><option>Client</option></select></div><div class="flex flex-col gap-1.5"><label class="text-label-caps text-on-surface-variant uppercase">Induk (Parent Device)</label><input class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary focus:border-primary outline-none" placeholder="Pilih perangkat induk..." type="text"/></div><div class="flex flex-col gap-1.5"><label class="text-label-caps text-on-surface-variant uppercase">Nama Perangkat</label><input class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary focus:border-primary outline-none" placeholder="Contoh: ODP-SU-05" type="text"/></div><div class="flex flex-col gap-1.5"><label class="text-label-caps text-on-surface-variant uppercase">Keterangan</label><textarea class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary focus:border-primary outline-none resize-none" placeholder="Catatan tambahan..." rows="3"></textarea></div><div class="flex gap-3 mt-2"><button class="flex-1 py-2.5 border border-outline-variant text-on-surface font-medium rounded-lg hover:bg-surface-container transition-colors" onclick="document.getElementById('add-device-modal').classList.add('hidden')" type="button">Batal</button><button class="flex-1 py-2.5 bg-primary text-white font-medium rounded-lg hover:bg-primary-fixed transition-colors shadow-sm" type="submit">Simpan</button></div></form></div></div></body></html>

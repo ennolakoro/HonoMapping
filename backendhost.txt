@@ -1,0 +1,115 @@
+TUTORIAL DEPLOYMENT BACKEND & MIKROTIK BRIDGE (VPS & CLOUDFLARE WORKERS)
+==========================================================================
+
+Ada dua cara utama untuk meng-host backend WireMap Anda. Silakan pilih metode yang paling sesuai dengan kebutuhan infrastruktur Anda.
+
+==========================================================================
+METODE A: HONO BACKEND & BRIDGE BERJALAN BERSAMA DI SATU VPS (REKOMENDASI UTAMA)
+==========================================================================
+Metode ini adalah yang paling sederhana dan aman karena kedua aplikasi berjalan berdampingan di satu server VPS dengan IP Publik. Anda tidak memerlukan tunnel (seperti Ngrok/Cloudflare Tunnel) karena Hono bisa langsung menembak Bridge secara lokal (`127.0.0.1:3005`).
+
+LANGKAH 1: KONEKSI KE VPS ANDA
+Masuk ke VPS Anda (misalnya Ubuntu Server) menggunakan SSH:
+$ ssh root@IP_VPS_ANDA
+
+LANGKAH 2: INSTALL NODE.JS & PM2
+Pastikan Node.js dan PM2 (Process Manager) sudah terinstall di VPS:
+$ curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
+$ sudo apt-get install -y nodejs
+$ sudo npm install -g pm2
+
+LANGKAH 3: UPLOAD FILE KE VPS
+Unggah seluruh folder `wiremap-backend` dari komputer Anda ke VPS (bisa menggunakan aplikasi WinSCP atau FileZilla).
+
+LANGKAH 4: SET UP HONO UNTUK RUNNING DI NODE.JS VPS
+Karena proyek ini awalnya disiapkan untuk Cloudflare Workers, kita perlu menginstall adapter Node.js di folder backend VPS Anda:
+$ cd /path/ke/folder/wiremap-backend/
+$ npm install @hono/node-server
+
+Lalu, buat satu file baru bernama `server.js` di root folder backend VPS Anda:
+```javascript
+// server.js
+import { serve } from '@hono/node-server'
+import app from './src/index.ts'
+
+// Hono akan mendengarkan request publik di port 8787
+serve({
+  fetch: app.fetch,
+  port: 8787
+}, (info) => {
+  console.log(`Server Hono berjalan di http://localhost:${info.port}`)
+})
+```
+
+LANGKAH 5: SESUAIKAN CONTEXT DATABASE & BINDINGS DI VPS
+Karena VPS menggunakan environment variable sistem (bukan wrangler.toml), buat file `.env` di root folder backend VPS Anda:
+```env
+TURSO_DATABASE_URL="libsql://<NAMA_DATABASE_ANDA>.turso.io"
+TURSO_AUTH_TOKEN="<TOKEN_DATABASE_TURSO_ANDA>"
+MIKROTIK_IP="23.94.68.141:2001"
+MIKROTIK_USER="restoe"
+MIKROTIK_PASS="boemi"
+MODEM_CWMP_USER="admin"
+MODEM_CWMP_PASS="admin"
+```
+
+LANGKAH 6: JALANKAN KEDUA APLIKASI DI BACKGROUND (PM2)
+Gunakan PM2 agar server Hono & Mikrotik Bridge tetap berjalan selamanya walaupun terminal SSH Anda ditutup:
+
+# Jalankan Mikrotik Bridge (Port 3005)
+$ pm2 start mikrotik-bridge.js --name "mikrotik-bridge"
+
+# Jalankan Hono Backend Server (Port 8787)
+$ pm2 start server.js --name "hono-backend" --interpreter="node" --node-args="-r ts-node/register"
+
+# Simpan konfigurasi PM2 agar otomatis jalan saat VPS reboot
+$ pm2 save
+$ pm2 startup
+
+LANGKAH 7: SET UP PROFIL TR-069 DI OLT
+Arahkan ACS URL di OLT/Modem Anda langsung ke IP Publik VPS Anda:
+👉 URL ACS: http://IP_VPS_ANDA:8787/cwmp (atau /c)
+
+
+==========================================================================
+METODE B: HONO DI CLOUDFLARE WORKERS + BRIDGE DI VPS/KANTOR
+==========================================================================
+Gunakan metode ini jika Anda ingin menghemat biaya hosting Hono (gratis di Cloudflare Workers), namun tetap harus menjalankan `mikrotik-bridge.js` di VPS atau PC kantor Anda yang memiliki akses ke jaringan Mikrotik.
+
+LANGKAH 1: DEPLOY HONO BACKEND KE CLOUDFLARE WORKERS
+1. Buka terminal lokal di laptop Anda pada folder `wiremap-backend`.
+2. Ketik perintah:
+   $ npx wrangler login
+3. Kirim kredensial rahasia database & mikrotik ke Cloudflare (Secrets):
+   $ npx wrangler secret put TURSO_AUTH_TOKEN
+   $ npx wrangler secret put MIKROTIK_PASS
+4. Edit file `wrangler.toml` di komputer Anda, masukkan variabel ini:
+   ```toml
+   [vars]
+   TURSO_DATABASE_URL = "libsql://<NAMA_DATABASE_ANDA>.turso.io"
+   MIKROTIK_IP = "23.94.68.141:2001"
+   MIKROTIK_USER = "restoe"
+   # Diisi dengan URL Tunnel/IP Publik tempat Jembatan Mikrotik Anda berjalan (Langkah 2)
+   MIKROTIK_BRIDGE_URL = "https://bridge-anda.loca.lt" 
+   ```
+5. Jalankan perintah deploy:
+   $ npx wrangler deploy
+   (Catat URL Worker yang diberikan Cloudflare, misal: `https://wiremap-backend.username.workers.dev`)
+
+LANGKAH 2: JALANKAN MIKROTIK BRIDGE DI VPS / PC LOKAL KANTOR
+1. Buat folder baru di VPS/PC Kantor Anda, lalu unggah file:
+   - `mikrotik-bridge.js`
+   - `package.json`
+   - `.dev.vars` (sesuaikan kredensial Mikrotik Anda)
+2. Install dependencies di VPS/PC Kantor tersebut:
+   $ npm install
+3. Jalankan Bridge menggunakan PM2 agar berjalan di background selamanya:
+   $ npm install -g pm2
+   $ pm2 start mikrotik-bridge.js --name "mikrotik-bridge"
+4. Ekspos port `3005` tempat jembatan berjalan menggunakan Cloudflare Tunnel atau LocalTunnel agar bisa diakses oleh Cloudflare Workers di internet.
+   - Jika pakai LocalTunnel: `npx localtunnel --port 3005 --subdomain bridge-anda`
+   - Masukkan URL ini ke variabel `MIKROTIK_BRIDGE_URL` di `wrangler.toml` (Langkah 1 poin 4).
+
+LANGKAH 3: SET UP PROFIL TR-069 DI OLT
+Arahkan ACS URL di OLT/Modem ke URL Cloudflare Workers Anda:
+👉 URL ACS: https://wiremap-backend.username.workers.dev/cwmp (atau /c)

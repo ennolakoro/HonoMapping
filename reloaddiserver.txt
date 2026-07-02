@@ -1,0 +1,104 @@
+TUTORIAL AUTO-RELOAD / CD (CONTINUOUS DEPLOYMENT) DI SERVER VPS VIA GITHUB
+========================================================================
+
+Agar setiap kali Anda melakukan `git push` dari komputer lokal, server VPS Anda otomatis melakukan `git pull` dan me-restart (reload) aplikasi tanpa campur tangan manual, metode paling standar dan aman adalah menggunakan GITHUB ACTIONS + SSH.
+
+Dengan metode ini, GitHub akan bertindak sebagai penggerak otomatis yang masuk ke VPS Anda via SSH, mengambil kode terbaru, dan menyuruh PM2 melakukan reload.
+
+------------------------------------------------------------------------
+LANGKAH 1: MEMBUAT SSH KEY PADA VPS & DAFTARKAN
+------------------------------------------------------------------------
+1. Masuk ke terminal VPS Anda via SSH.
+2. Buat SSH Key baru jika belum ada:
+   $ ssh-keygen -t rsa -b 4096 -C "deployer@wiremap"
+   (Tekan Enter terus sampai selesai, kosongkan passphrase)
+3. Daftarkan key tersebut agar VPS mengenali koneksi otomatis:
+   $ cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+   $ chmod 600 ~/.ssh/authorized_keys
+   $ chmod 700 ~/.ssh
+4. Tampilkan isi SSH Private Key (Kunci Rahasia):
+   $ cat ~/.ssh/id_rsa
+5. Blok seluruh tulisan private key yang muncul (termasuk baris `-----BEGIN RSA PRIVATE KEY-----` dan `-----END RSA PRIVATE KEY-----`), lalu salin (copy).
+
+------------------------------------------------------------------------
+LANGKAH 2: SETTING REPOSITORY SECRETS DI GITHUB
+------------------------------------------------------------------------
+Agar GitHub bisa masuk ke VPS Anda dengan aman:
+1. Buka halaman Repository GitHub Anda (`HonoMapping`) di browser.
+2. Masuk ke menu **Settings** -> **Secrets and variables** -> **Actions**.
+3. Klik tombol **New repository secret** dan tambahkan 3 variabel rahasia berikut:
+
+   - Nama Secret: `SSH_PRIVATE_KEY`
+     Value: (Paste / tempel isi kunci rahasia `id_rsa` yang Anda salin dari VPS di Langkah 1 tadi)
+
+   - Nama Secret: `SSH_HOST`
+     Value: (IP Publik VPS Anda, misal: `23.94.68.141`)
+
+   - Nama Secret: `SSH_USER`
+     Value: (Username login VPS Anda, biasanya: `root`)
+
+------------------------------------------------------------------------
+LANGKAH 3: MEMBUAT WORKFLOW ACTION DI WORKSPACE LOKAL
+------------------------------------------------------------------------
+Di komputer lokal Anda, buat folder khusus GitHub Actions di dalam root folder proyek (`TOPOLOGI OLT`):
+
+1. Buat folder bernama `.github` di root.
+2. Di dalam folder `.github`, buat folder bernama `workflows`.
+3. Di dalam folder `.github/workflows/`, buat file baru bernama `deploy.yml`.
+4. Isi file `deploy.yml` dengan kode otomatisasi berikut:
+
+```yaml
+name: Auto Deploy to VPS
+
+on:
+  push:
+    branches:
+      - main # Memicu deploy otomatis setiap kali push ke branch main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Eksekusi Perintah Deploy di VPS via SSH
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          port: 22
+          script: |
+            # Masuk ke folder backend di VPS Anda (Sesuaikan path-nya!)
+            cd /path/ke/folder/wiremap-backend
+            
+            # Tarik kode terbaru dari GitHub
+            git pull origin main
+            
+            # Install package baru jika ada
+            npm install --omit=dev
+            
+            # Reload aplikasi menggunakan PM2 (Zero Downtime / Tanpa Mati)
+            pm2 reload all
+```
+
+*(PENTING: Ganti `/path/ke/folder/wiremap-backend` di dalam file deploy.yml dengan alamat path folder proyek sesungguhnya di VPS Anda).*
+
+------------------------------------------------------------------------
+LANGKAH 4: SET UP REPOSITORY DI VPS (HANYA SEKALI DI AWAL)
+------------------------------------------------------------------------
+Sebelum GitHub Actions bisa bekerja, folder proyek di VPS harus dikoneksikan ke GitHub untuk pertama kali:
+1. Masuk ke VPS Anda via SSH.
+2. Masuk ke folder tempat Anda ingin menaruh proyek Anda:
+   $ cd /path/ke/folder/
+3. Clone repository GitHub Anda ke VPS:
+   $ git clone https://github.com/ennolakoro/HonoMapping.git
+4. Setelah ter-clone, lakukan setup `.env` dan jalankan PM2 untuk pertama kali (seperti petunjuk di `backendhost.txt`).
+
+------------------------------------------------------------------------
+UJI COBA AUTO-RELOAD:
+------------------------------------------------------------------------
+Sekarang, jika Anda mengubah kode di laptop lokal Anda (misal mengedit file di `wiremap-backend`), Anda cukup melakukan:
+$ git add .
+$ git commit -m "update kode"
+$ git push origin main
+
+Begitu proses push selesai, buka tab **Actions** di web GitHub Anda. Anda akan melihat proses deployment berjalan otomatis, masuk ke VPS, melakukan `git pull`, dan melakukan `pm2 reload all` secara instan!
