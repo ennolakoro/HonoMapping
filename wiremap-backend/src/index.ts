@@ -144,8 +144,8 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
           // EG8145V5: coba KeyPassphrase (lebih umum dari PreSharedKey.1.PreSharedKey)
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-          // Path GPON Huawei EG8145V5 yang benar (level WANDevice, bukan WANConnectionDevice)
-          'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower',
+          // Path GPON Huawei EG8145V5 yang benar (ditemukan dari discovery: Interafce typo)
+          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
         ];
       } else if (isZte) {
         currentParamsToRequest = [
@@ -185,9 +185,9 @@ const cwmpHandler = async (c: any) => {
 
   // Jika modem mengirim body kosong dan kita sedang menunggunya
   if (bodyText.trim() === '' && waitingForEmptyPost) {
-    console.log(`Menerima Empty POST, mengirim GetParameterNames untuk pencarian parameter...`)
+    console.log(`Menerima Empty POST, mengirim GetParameterValues dengan ID: ${currentCwmpId}...`)
     waitingForEmptyPost = false; // Reset agar tidak infinite loop
-    const responseXml = createGetParameterNames(currentCwmpId, currentCwmpNamespace, 'InternetGatewayDevice.WANDevice.1.');
+    const responseXml = createGetParameterValues(currentCwmpId, currentCwmpNamespace, currentParamsToRequest);
     return new Response(responseXml, {
       headers: {
         'Content-Type': 'text/xml',
@@ -197,12 +197,7 @@ const cwmpHandler = async (c: any) => {
     })
   }
 
-  if (bodyText.includes('GetParameterNamesResponse')) {
-    console.log("\n=== [DEBUG] DAFTAR PARAMETER DARI MODEM ===")
-    console.log(bodyText)
-    console.log("===========================================\n")
-    return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
-  }
+  // Hapus Handler GetParameterNamesResponse karena discovery sudah selesai
   
   if (bodyText.includes('GetParameterValuesResponse')) {
     // 1. Terima jawaban dari modem (WLAN/LAN/SSID)
