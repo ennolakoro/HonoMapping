@@ -1,4 +1,4 @@
-const API_URL = 'http://mikrowire.id:8787/api';
+const API_URL = (window.__BACKEND_URL__ || 'http://127.0.0.1:8787') + '/api';
 
 // State sederhana untuk menyimpan token secara lokal
 let authToken = localStorage.getItem('wiremap_token') || null;

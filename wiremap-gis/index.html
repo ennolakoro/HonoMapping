@@ -11,6 +11,21 @@
   </head>
   <body>
     <div id="app"></div>
+    <!-- Konfigurasi Backend URL (auto-detect: lokal atau VPS) -->
+    <script>
+      // Otomatis mendeteksi environment:
+      // - Jika diakses dari localhost → pakai backend lokal
+      // - Jika diakses dari domain/IP lain → pakai backend VPS di IP yang sama port 8787
+      (function() {
+        var host = window.location.hostname;
+        if (host === 'localhost' || host === '127.0.0.1') {
+          window.__BACKEND_URL__ = 'http://127.0.0.1:8787';
+        } else {
+          // Saat diakses dari luar (domain/IP VPS), gunakan IP/hostname yang sama port 8787
+          window.__BACKEND_URL__ = window.location.protocol + '//' + host + ':8787';
+        }
+      })();
+    </script>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

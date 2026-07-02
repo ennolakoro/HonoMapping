@@ -113,7 +113,7 @@ const loadDevices = async () => {
 
 const triggerSeed = async () => {
   try {
-    const res = await fetch('http://127.0.0.1:8787/api/seed', { method: 'POST' })
+    const res = await fetch(`${window.__BACKEND_URL__}/api/seed`, { method: 'POST' })
     if (res.ok) {
       alert("Berhasil load data dummy! Peta akan dimuat ulang.")
       loadDevices()
@@ -127,7 +127,7 @@ const triggerSeed = async () => {
 
 const triggerSync = async () => {
   try {
-    const res = await fetch('http://127.0.0.1:8787/api/sync-real-mikrotik', { method: 'POST' })
+    const res = await fetch(`${window.__BACKEND_URL__}/api/sync-real-mikrotik`, { method: 'POST' })
     if (res.ok) {
       alert("Berhasil menarik data Mikrotik! Peta akan dimuat ulang.")
       loadDevices()
@@ -143,7 +143,7 @@ const triggerSync = async () => {
 const triggerClear = async () => {
   if (!confirm("Apakah Anda yakin ingin MENGHAPUS SEMUA DATA di peta ini?")) return;
   try {
-    const res = await fetch('http://127.0.0.1:8787/api/clear', { method: 'POST' })
+    const res = await fetch(`${window.__BACKEND_URL__}/api/clear`, { method: 'POST' })
     if (res.ok) {
       alert("Peta berhasil dibersihkan!")
       loadDevices()
