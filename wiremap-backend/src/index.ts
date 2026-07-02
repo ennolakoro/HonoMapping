@@ -177,9 +177,9 @@ const cwmpHandler = async (c: any) => {
 
   // Jika modem mengirim body kosong dan kita sedang menunggunya
   if (bodyText.trim() === '' && waitingForEmptyPost) {
-    console.log(`Menerima Empty POST, mengirim GetParameterValues dengan ID: ${currentCwmpId}...`)
+    console.log(`Menerima Empty POST, mengirim GetParameterNames untuk pencarian parameter...`)
     waitingForEmptyPost = false; // Reset agar tidak infinite loop
-    const responseXml = createGetParameterValues(currentCwmpId, currentCwmpNamespace, currentParamsToRequest);
+    const responseXml = createGetParameterNames(currentCwmpId, currentCwmpNamespace, 'InternetGatewayDevice.WANDevice.1.');
     return new Response(responseXml, {
       headers: {
         'Content-Type': 'text/xml',
@@ -187,6 +187,13 @@ const cwmpHandler = async (c: any) => {
         'Set-Cookie': 'session=1; Path=/; HttpOnly'
       }
     })
+  }
+
+  if (bodyText.includes('GetParameterNamesResponse')) {
+    console.log("\n=== [DEBUG] DAFTAR PARAMETER DARI MODEM ===")
+    console.log(bodyText)
+    console.log("===========================================\n")
+    return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
   }
   
   if (bodyText.includes('GetParameterValuesResponse')) {
