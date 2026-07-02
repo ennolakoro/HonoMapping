@@ -134,9 +134,10 @@ const cwmpHandler = async (c: any) => {
       if (isHuawei) {
         currentParamsToRequest = [
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
-          // Coba beberapa path Huawei GPON yang umum (EG8145V5 / HG8245)
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower',
+          // EG8145V5: coba KeyPassphrase (lebih umum dari PreSharedKey.1.PreSharedKey)
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+          // Path GPON Huawei EG8145V5 yang benar (level WANDevice, bukan WANConnectionDevice)
+          'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower',
         ];
       } else if (isZte) {
         currentParamsToRequest = [
