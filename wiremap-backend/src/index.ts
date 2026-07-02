@@ -450,6 +450,8 @@ app.post('/api/protected/devices', async (c) => {
     
     // Konversi string kosong ke null, dan pastikan tipe data sesuai skema
     const parentId = body.induk ? parseInt(body.induk, 10) : null
+    const lat = body.lat !== undefined && body.lat !== null && body.lat !== '' ? parseFloat(body.lat) : null
+    const lng = body.lng !== undefined && body.lng !== null && body.lng !== '' ? parseFloat(body.lng) : null
     
     if (body.type === 'CLIENT') {
       // Masukkan ke tabel clients khusus
@@ -457,23 +459,24 @@ app.post('/api/protected/devices', async (c) => {
         name: body.nama || body.name,
         phone: body.phone || null,
         odpId: parentId, // Karena induk dari client adalah ODP
-        lat: parseFloat(body.lat),
-        lng: parseFloat(body.lng),
+        lat,
+        lng,
         pppoeUsername: body.pppoeUsername || null,
         snModem: body.snModem || null
       }).returning()
       return c.json(result[0], 201)
     } else {
       // Masukkan ke tabel devices (OLT/ODC/ODP)
-      const capacity = body.kapasitas ? parseInt(body.kapasitas, 10) : null
-      const portsCount = body.jumlahPort ? parseInt(body.jumlahPort, 10) : null
+      const portValue = body.jumlahPort ? parseInt(body.jumlahPort, 10) : null
+      const capacity = body.type === 'ODC' ? portValue : (body.kapasitas ? parseInt(body.kapasitas, 10) : null)
+      const portsCount = body.type === 'ODP' ? portValue : null
       
       const result = await db.insert(devices).values({
         type: body.type,
         name: body.nama || body.name,
         parentId: parentId,
-        lat: parseFloat(body.lat),
-        lng: parseFloat(body.lng),
+        lat,
+        lng,
         capacity: capacity,
         portsCount: portsCount
       }).returning()
@@ -495,59 +498,73 @@ app.get('/api/network-topology', (c) => {
   ])
 })
 
-// Endpoint Auto-Discovery: Tarik data ASLI dari Mikrotik ke Peta
+// Endpoint Auto-Discovery: tarik data PPPoE ke daftar tunggu plotting.
+// Sync ini non-destruktif: topology OLT/ODC/ODP dan koordinat client yang sudah diplot tidak dihapus.
 app.post('/api/sync-real-mikrotik', async (c) => {
+  return c.json({
+    error: 'Endpoint sync lama sudah dipindahkan',
+    details: 'Gunakan /api/protected/sync-real-mikrotik melalui frontend yang sudah login, lalu restart backend jika endpoint protected belum tersedia.'
+  }, 410)
+})
+
+app.post('/api/protected/sync-real-mikrotik', async (c) => {
   try {
     const db = getDb(c.env)
     const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
     
     if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
-      return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi di .dev.vars' }, 500)
+      return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi' }, 500)
     }
 
-    // 1. Tarik Data ASLI dari Mikrotik
     const activeClients = await getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
     if (!activeClients || activeClients.length === 0) {
       return c.json({ error: 'Tidak ada client PPPoE aktif yang ditemukan di Mikrotik.' }, 404)
     }
 
-    // 2. Bersihkan DB agar bersih dari dummy
-    await db.delete(clients)
-    await db.delete(devices)
+    let created = 0
+    let updated = 0
 
-    // 3. Buat 1 OLT Pusat Utama sebagai Induk
-    const centerLat = -7.250445
-    const centerLng = 112.768845
-    
-    const oltResult = await db.insert(devices).values({
-      type: 'OLT',
-      name: 'OLT Mikrotik (Real)',
-      lat: centerLat,
-      lng: centerLng,
-      capacity: 1024
-    }).returning()
-    const olt = oltResult[0]
-
-    // 4. Masukkan semua client asli ke database, sebar posisinya melingkar di sekitar OLT
-    const radius = 0.005; // radius sebaran peta
-    
     for (let i = 0; i < activeClients.length; i++) {
-      const pppoe = activeClients[i];
-      const angle = (i / activeClients.length) * Math.PI * 2;
-      
-      await db.insert(clients).values({
-        name: pppoe.name || `Client-${i}`,
-        odpId: olt.id, // Bypass ODC/ODP sementara, langsung tembak OLT
-        lat: centerLat + (Math.sin(angle) * radius),
-        lng: centerLng + (Math.cos(angle) * radius),
-        pppoeUsername: pppoe.name,
-        isOnline: true
-      })
+      const pppoe = activeClients[i]
+      const username = pppoe.name || pppoe.user || pppoe.username || `Client-${i + 1}`
+      const wanIp = pppoe.address || pppoe['remote-address'] || pppoe.remoteAddress || null
+      const macAddress = pppoe['caller-id'] || pppoe.callerId || pppoe.macAddress || pppoe.mac || null
+
+      const existing = await db.select()
+        .from(clients)
+        .where(eq(clients.pppoeUsername, username))
+        .limit(1)
+
+      if (existing[0]) {
+        await db.update(clients)
+          .set({
+            wanIp,
+            macAddress,
+            isOnline: true
+          })
+          .where(eq(clients.id, existing[0].id))
+        updated++
+      } else {
+        await db.insert(clients).values({
+          name: username,
+          pppoeUsername: username,
+          wanIp,
+          macAddress,
+          lat: null,
+          lng: null,
+          odpId: null,
+          isOnline: true
+        })
+        created++
+      }
     }
 
     return c.json({ 
       success: true, 
-      message: `Berhasil menarik ${activeClients.length} data asli dari Mikrotik dan menyebarkannya di peta!` 
+      message: `Sync selesai: ${created} client baru masuk daftar tunggu, ${updated} client diperbarui.`,
+      total: activeClients.length,
+      created,
+      updated
     })
   } catch (err: any) {
     return c.json({ error: 'Gagal auto-sync data asli', details: err.message }, 500)
@@ -738,20 +755,26 @@ app.post('/api/protected/devices/:id/update', async (c) => {
   try {
     if (body.type === 'CLIENT') {
       const dbId = id >= 1000000 ? id - 1000000 : id
+      const clientUpdate: Record<string, any> = {}
+      if (body.name !== undefined) clientUpdate.name = body.name
+      if (body.phone !== undefined) clientUpdate.phone = body.phone || null
+      if (body.pppoeUsername !== undefined) clientUpdate.pppoeUsername = body.pppoeUsername || null
+      if (body.snModem !== undefined) clientUpdate.snModem = body.snModem || null
+      if (body.wifiSsid !== undefined) clientUpdate.wifiSsid = body.wifiSsid || null
+      if (body.wifiPassword !== undefined) clientUpdate.wifiPassword = body.wifiPassword || null
+      if (body.wifiSsid5g !== undefined) clientUpdate.wifiSsid5g = body.wifiSsid5g || null
+      if (body.wifiPassword5g !== undefined) clientUpdate.wifiPassword5g = body.wifiPassword5g || null
+      if (body.rxPower !== undefined) clientUpdate.rxPower = body.rxPower || null
+      if (body.txPower !== undefined) clientUpdate.txPower = body.txPower || null
+      if (body.temperature !== undefined) clientUpdate.temperature = body.temperature || null
+      if (body.voltage !== undefined) clientUpdate.voltage = body.voltage || null
+      if (body.wanIp !== undefined) clientUpdate.wanIp = body.wanIp || null
+      if (body.macAddress !== undefined) clientUpdate.macAddress = body.macAddress || null
+      if (body.lat !== undefined) clientUpdate.lat = body.lat !== null && body.lat !== '' ? parseFloat(body.lat) : null
+      if (body.lng !== undefined) clientUpdate.lng = body.lng !== null && body.lng !== '' ? parseFloat(body.lng) : null
+
       await db.update(clients)
-        .set({
-          name: body.name,
-          phone: body.phone || null,
-          pppoeUsername: body.pppoeUsername || null,
-          snModem: body.snModem || null,
-          wifiSsid: body.wifiSsid || null,
-          wifiPassword: body.wifiPassword || null,
-          wifiSsid5g: body.wifiSsid5g || null,
-          wifiPassword5g: body.wifiPassword5g || null,
-          rxPower: body.rxPower || null,
-          lat: body.lat ? parseFloat(body.lat) : null,
-          lng: body.lng ? parseFloat(body.lng) : null,
-        })
+        .set(clientUpdate)
         .where(eq(clients.id, dbId))
     } else {
       await db.update(devices)
