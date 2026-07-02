@@ -22,20 +22,20 @@ LANGKAH 3: UPLOAD FILE KE VPS
 Unggah seluruh folder `wiremap-backend` dari komputer Anda ke VPS (bisa menggunakan aplikasi WinSCP atau FileZilla).
 
 LANGKAH 4: SET UP HONO UNTUK RUNNING DI NODE.JS VPS
-Karena proyek ini awalnya disiapkan untuk Cloudflare Workers, kita perlu menginstall adapter Node.js di folder backend VPS Anda:
+Karena proyek ini awalnya disiapkan untuk Cloudflare Workers, kita perlu menginstall adapter Node.js dan compiler TypeScript (`tsx`) di folder backend VPS Anda:
 $ cd /path/ke/folder/wiremap-backend/
-$ npm install @hono/node-server
+$ npm install
+$ npm install @hono/node-server tsx
 
-Lalu, buat satu file baru bernama `server.js` di root folder backend VPS Anda:
-```javascript
 // server.js
 import { serve } from '@hono/node-server'
 import app from './src/index.ts'
 
-// Hono akan mendengarkan request publik di port 8787
+// Hono akan mendengarkan request publik di port 8787 pada semua interface
 serve({
   fetch: app.fetch,
-  port: 8787
+  port: 8787,
+  hostname: '0.0.0.0' // Wajib agar bisa diakses secara publik dari luar VPS
 }, (info) => {
   console.log(`Server Hono berjalan di http://localhost:${info.port}`)
 })
@@ -44,8 +44,8 @@ serve({
 LANGKAH 5: SESUAIKAN CONTEXT DATABASE & BINDINGS DI VPS
 Karena VPS menggunakan environment variable sistem (bukan wrangler.toml), buat file `.env` di root folder backend VPS Anda:
 ```env
-TURSO_DATABASE_URL="libsql://<NAMA_DATABASE_ANDA>.turso.io"
-TURSO_AUTH_TOKEN="<TOKEN_DATABASE_TURSO_ANDA>"
+TURSO_DATABASE_URL="libsql://wiremap-db-ennolakoro.aws-us-east-1.turso.io"
+TURSO_AUTH_TOKEN="eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJpYXQiOjE3ODI4OTI2NjUsImlkIjoiMDE5ZjFjYWUtYjMwMS03MmVkLThlNDQtNTcwZWYzYWYwZmQzIiwia2lkIjoibkVfX0tvaDN4Yk9XbEVEV2RBYkt3eXlYdmNERndZZzdpckpHNWFjYmZjUSIsInJpZCI6IjlmYjBiN2FkLWU4ODUtNDdhOC1iMGUxLWRjMTNhNzViZDFmNiJ9.Kj1cEoiSXq9PWN5sbiLe6s76eKL4Pq9TkUXUJaxYI8rr6UVOd4cXO6IO8JlEyGJKrHW8kl4uyGki3LjWEpIrAw"
 MIKROTIK_IP="23.94.68.141:2001"
 MIKROTIK_USER="restoe"
 MIKROTIK_PASS="boemi"
@@ -54,13 +54,16 @@ MODEM_CWMP_PASS="admin"
 ```
 
 LANGKAH 6: JALANKAN KEDUA APLIKASI DI BACKGROUND (PM2)
-Gunakan PM2 agar server Hono & Mikrotik Bridge tetap berjalan selamanya walaupun terminal SSH Anda ditutup:
+Gunakan PM2 agar server Hono & Mikrotik Bridge tetap berjalan selamanya walaupun terminal SSH Anda ditutup.
+
+*PENTING: Pastikan Anda berada di dalam subfolder `wiremap-backend` saat menjalankan perintah ini:*
+$ cd ~/wiremapbackend/HonoMapping/wiremap-backend/
 
 # Jalankan Mikrotik Bridge (Port 3005)
 $ pm2 start mikrotik-bridge.js --name "mikrotik-bridge"
 
-# Jalankan Hono Backend Server (Port 8787)
-$ pm2 start server.js --name "hono-backend" --interpreter="node" --node-args="-r ts-node/register"
+# Jalankan Hono Backend Server (Port 8787) menggunakan tsx interpreter
+$ pm2 start server.js --name "hono-backend" --interpreter="npx" --interpreter-args="tsx"
 
 # Simpan konfigurasi PM2 agar otomatis jalan saat VPS reboot
 $ pm2 save

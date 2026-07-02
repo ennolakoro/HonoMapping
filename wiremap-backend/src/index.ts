@@ -207,10 +207,21 @@ app.post('/cwmp', cwmpHandler)
 app.post('/c', cwmpHandler)
 app.post('/cw', cwmpHandler)
 
+// Helper untuk membaca environment bindings baik di Cloudflare Workers maupun Node.js (VPS)
+function getEnv(c: any) {
+  const env = c.env || {};
+  return {
+    MIKROTIK_IP: env.MIKROTIK_IP || (typeof process !== 'undefined' ? process.env.MIKROTIK_IP : ''),
+    MIKROTIK_USER: env.MIKROTIK_USER || (typeof process !== 'undefined' ? process.env.MIKROTIK_USER : ''),
+    MIKROTIK_PASS: env.MIKROTIK_PASS || (typeof process !== 'undefined' ? process.env.MIKROTIK_PASS : ''),
+    MIKROTIK_BRIDGE_URL: env.MIKROTIK_BRIDGE_URL || (typeof process !== 'undefined' ? process.env.MIKROTIK_BRIDGE_URL : '')
+  };
+}
+
 // Endpoint untuk Vue 3 (Memicu Modem secara Real-time)
 app.post('/api/protected/modem/:ip/sync', async (c) => {
   const modemIp = c.req.param('ip')
-  const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = c.env
+  const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = getEnv(c)
   
   try {
     // Menyuruh Mikrotik "mencolek" modem
@@ -249,7 +260,7 @@ app.get('/api/protected/devices', async (c) => {
 // Endpoint Mikrotik Real-Time
 app.get('/api/protected/mikrotik/pppoe-status', async (c) => {
   try {
-    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = c.env
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = getEnv(c)
     
     if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
       return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi di server' }, 500)
@@ -317,7 +328,7 @@ app.get('/api/network-topology', (c) => {
 app.post('/api/sync-real-mikrotik', async (c) => {
   try {
     const db = getDb(c.env)
-    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = c.env
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = getEnv(c)
     
     if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
       return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi di .dev.vars' }, 500)
