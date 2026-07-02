@@ -11,7 +11,7 @@ function getHeaders(username: string, password: string) {
 /**
  * Mengambil daftar PPPoE Active dari Mikrotik.
  */
-export async function getPppoeActive(mikrotikIp: string, user: string, pass: string, bridgeUrl?: string) {
+export async function getPppoeActive(mikrotikIp: string, user: string, pass: string, bridgeUrl?: string): Promise<any[]> {
   // Karena Mikrotik V6 tidak punya REST API, kita pakai Bridge yang ditentukan atau default ke port 3005
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/active`;
   

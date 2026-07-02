@@ -1,8 +1,8 @@
 import { drizzle } from 'drizzle-orm/libsql';
-import { createClient } from '@libsql/client/web';
+import { createClient } from '@libsql/client';
 import * as schema from './schema';
 
-export function getDb(env?: { TURSO_DATABASE_URL: string, TURSO_AUTH_TOKEN: string }) {
+export function getDb(env?: { TURSO_DATABASE_URL?: string; TURSO_AUTH_TOKEN?: string }) {
   const url = env?.TURSO_DATABASE_URL || (typeof process !== 'undefined' ? process.env.TURSO_DATABASE_URL : undefined);
   const authToken = env?.TURSO_AUTH_TOKEN || (typeof process !== 'undefined' ? process.env.TURSO_AUTH_TOKEN : undefined);
 

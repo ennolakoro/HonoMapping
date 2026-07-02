@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import crypto from 'crypto'
 import { cors } from 'hono/cors'
 import { getDb } from './db'
 import { devices, session as sessionTable, user as userTable } from './db/schema'
@@ -14,7 +15,11 @@ type Bindings = {
   MIKROTIK_BRIDGE_URL?: string
 }
 
-const app = new Hono<{ Bindings: Bindings }>()
+type Variables = {
+  user: any
+}
+
+const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 
 app.use('*', cors())
@@ -34,11 +39,12 @@ app.use('/api/protected/*', async (c, next) => {
   const db = getDb(c.env)
   
   // Verifikasi token dari database
-  const validSession = await db.select()
+  const validSessions = await db.select()
     .from(sessionTable)
     .innerJoin(userTable, eq(sessionTable.userId, userTable.id))
     .where(eq(sessionTable.token, token))
-    .get()
+    
+  const validSession = validSessions[0]
     
   if (!validSession) {
     return c.json({ error: 'Invalid or expired session' }, 401)
@@ -56,7 +62,7 @@ app.post('/api/auth/login', async (c) => {
   // Untuk keperluan demo/development:
   if (body.email === 'admin@wiremap.local' && body.password === 'admin123') {
     // Upsert user admin
-    const adminUser = await db.insert(userTable).values({
+    const adminUserResult = await db.insert(userTable).values({
       id: 'admin-id-1',
       name: 'Admin User',
       email: 'admin@wiremap.local',
@@ -66,7 +72,9 @@ app.post('/api/auth/login', async (c) => {
     }).onConflictDoUpdate({
       target: userTable.email,
       set: { updatedAt: new Date() }
-    }).returning().get()
+    }).returning()
+    
+    const adminUser = adminUserResult[0]
     
     // Create token
     const token = crypto.randomUUID()
