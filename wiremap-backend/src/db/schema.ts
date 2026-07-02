@@ -62,6 +62,18 @@ export const clients = sqliteTable("clients", {
   snModem: text("sn_modem"),
   wifiSsid: text("wifi_ssid"),
   wifiPassword: text("wifi_password"),
+  wifiSsid5g: text("wifi_ssid_5g"),
+  wifiPassword5g: text("wifi_password_5g"),
+  lanStatus: text("lan_status"),
+  associatedDevices: integer("associated_devices"),
+  brand: text("brand"),
+  modelName: text("model_name"),
+  hardwareVersion: text("hardware_version"),
+  softwareVersion: text("software_version"),
+  macAddress: text("mac_address"),
+  txPower: text("tx_power"),
+  temperature: text("temperature"),
+  voltage: text("voltage"),
   rxPower: text("rx_power"),
   isOnline: integer("is_online", { mode: "boolean" }).default(false)
 });

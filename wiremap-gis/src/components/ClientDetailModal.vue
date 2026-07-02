@@ -39,6 +39,46 @@ const devicePath = computed(() => {
   return path
 })
 
+// LAN Ports Status parser
+const lanPortsList = computed(() => {
+  if (!props.device?.lanStatus) return []
+  return props.device.lanStatus.split(',').map(p => {
+    const parts = p.trim().split(':');
+    if (parts.length < 2) return null;
+    const name = parts[0];
+    const statusSpeed = parts[1];
+    const isUp = statusSpeed.toLowerCase().includes('up');
+    let speed = 'Down';
+    if (isUp) {
+      const speedMatch = statusSpeed.match(/\((.*?)\)/);
+      speed = speedMatch ? speedMatch[1] : '100 Mbps'; // fallback
+      if (speed === '1000Mbps' || speed === '1Gbps') speed = '1 Gbps';
+      else if (speed === '100Mbps') speed = '100 Mbps';
+      else if (speed === '10Mbps') speed = '10 Mbps';
+    }
+    return { name, isUp, speed };
+  }).filter(Boolean);
+})
+
+// Formatting helpers
+const formatTemp = (val) => {
+  if (!val) return 'N/A';
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  if (num > 1000) return (num / 1000).toFixed(1) + ' °C';
+  if (num > 150) return (num / 10).toFixed(1) + ' °C';
+  return num.toFixed(1) + ' °C';
+}
+
+const formatVoltage = (val) => {
+  if (!val) return 'N/A';
+  const num = parseFloat(val);
+  if (isNaN(num)) return val;
+  if (num > 1000000) return (num / 1000000).toFixed(2) + ' V';
+  if (num > 1000) return (num / 1000).toFixed(2) + ' V';
+  return num.toFixed(2) + ' V';
+}
+
 const handleGetPppoe = async () => {
   try {
     isLoadingPppoe.value = true
@@ -213,7 +253,7 @@ const handleSyncWifi = async () => {
         </div>
 
         <!-- TR-069 Section -->
-        <div class="bg-surface-container-low p-4 rounded-xl border border-outline-variant">
+        <div class="bg-surface-container-low p-4 rounded-xl border border-outline-variant mb-4">
           <div class="flex justify-between items-center mb-3">
             <h4 class="font-medium text-on-surface flex items-center gap-2">
               <span class="material-symbols-outlined text-green-500">wifi</span>
@@ -228,6 +268,125 @@ const handleSyncWifi = async () => {
           
           <div v-if="wifiSyncStatus" class="mt-2 text-sm p-3 rounded-lg border" :class="wifiSyncStatus.includes('Gagal') ? 'bg-error bg-opacity-10 text-error border-error border-opacity-30' : 'bg-green-500 bg-opacity-10 text-green-400 border-green-500 border-opacity-30'">
             {{ wifiSyncStatus }}
+          </div>
+        </div>
+
+        <!-- Advanced Modem Stats Dashboard -->
+        <div v-if="device.wifiSsid || device.rxPower || device.lanStatus" class="bg-surface-container-low p-4 rounded-xl mb-4 border border-outline-variant">
+          <h4 class="font-bold text-on-surface mb-3 flex items-center gap-2">
+            <span class="material-symbols-outlined text-green-500">analytics</span> Metrik Real-Time (Modem)
+          </h4>
+          
+          <!-- Grid Metrik Utama -->
+          <div class="grid grid-cols-2 gap-3 mb-4">
+            <!-- Redaman -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant flex flex-col justify-between">
+              <span class="text-on-surface-variant block text-xs">Redaman (Rx Power)</span>
+              <span class="font-bold font-mono text-base" :class="(!device.rxPower) ? 'text-on-surface' : (parseFloat(device.rxPower) > -27 ? 'text-green-500' : 'text-error')">
+                {{ device.rxPower ? device.rxPower + ' dBm' : 'N/A' }}
+              </span>
+            </div>
+            <!-- Laser Keluar -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant flex flex-col justify-between">
+              <span class="text-on-surface-variant block text-xs">Laser Out (Tx Power)</span>
+              <span class="font-bold font-mono text-base text-blue-500">
+                {{ device.txPower ? parseFloat(device.txPower).toFixed(2) + ' dBm' : 'N/A' }}
+              </span>
+            </div>
+            <!-- Suhu -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant flex flex-col justify-between">
+              <span class="text-on-surface-variant block text-xs">Suhu Internal</span>
+              <span class="font-bold font-mono text-base" :class="(!device.temperature) ? 'text-on-surface' : (parseFloat(device.temperature) < 60 ? 'text-green-500' : 'text-error')">
+                {{ formatTemp(device.temperature) }}
+              </span>
+            </div>
+            <!-- Tegangan -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant flex flex-col justify-between">
+              <span class="text-on-surface-variant block text-xs">Tegangan Adaptor</span>
+              <span class="font-bold font-mono text-base text-yellow-500">
+                {{ formatVoltage(device.voltage) }}
+              </span>
+            </div>
+          </div>
+
+          <!-- Total User -->
+          <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant flex items-center justify-between mb-4">
+            <div class="flex items-center gap-2">
+              <span class="material-symbols-outlined text-purple-500">devices</span>
+              <span class="text-sm font-medium">Jumlah Perangkat Terkoneksi</span>
+            </div>
+            <span class="bg-purple-500/20 text-purple-600 font-bold px-3 py-1 rounded-full text-sm">
+              {{ device.associatedDevices || 0 }} User
+            </span>
+          </div>
+
+          <!-- Port LAN Status Grid -->
+          <div class="mb-4">
+            <span class="text-on-surface-variant block text-xs mb-2 font-medium">Status Port LAN Fisik</span>
+            <div class="grid grid-cols-4 gap-2">
+              <div v-for="port in lanPortsList" :key="port.name" 
+                   class="p-2 rounded-lg border flex flex-col items-center justify-center text-center text-xs font-semibold"
+                   :class="port.isUp ? 'bg-green-500/10 border-green-500 text-green-600' : 'bg-surface-container-lowest border-outline-variant text-on-surface-variant'">
+                <span class="material-symbols-outlined text-lg mb-1">settings_ethernet</span>
+                <span>{{ port.name }}</span>
+                <span class="text-[9px] font-normal block truncate w-full mt-0.5" :class="port.isUp ? 'text-green-500' : 'text-on-surface-variant'">
+                  {{ port.speed }}
+                </span>
+              </div>
+              <div v-if="!lanPortsList || lanPortsList.length === 0" class="col-span-4 text-center py-2 text-xs text-on-surface-variant bg-surface-container-lowest rounded-lg border border-outline-variant">
+                Tidak ada data LAN port yang aktif
+              </div>
+            </div>
+          </div>
+
+          <!-- Wi-Fi Details -->
+          <div class="grid grid-cols-2 gap-3">
+            <!-- 2.4GHz -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant">
+              <span class="bg-blue-500/10 text-blue-500 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider mb-2 inline-block font-sans">WLAN 2.4 GHz</span>
+              <div class="text-sm font-semibold truncate" :title="device.wifiSsid">{{ device.wifiSsid || 'N/A' }}</div>
+              <div class="text-xs text-on-surface-variant font-mono mt-1 select-all cursor-pointer truncate" title="Klik untuk salin password">
+                🔑: {{ device.wifiPassword || 'None' }}
+              </div>
+            </div>
+            <!-- 5GHz -->
+            <div class="bg-surface-container-lowest p-3 rounded-lg border border-outline-variant">
+              <span class="bg-purple-500/10 text-purple-500 text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider mb-2 inline-block font-sans">WLAN 5 GHz</span>
+              <div class="text-sm font-semibold truncate" :title="device.wifiSsid5g">{{ device.wifiSsid5g || 'N/A' }}</div>
+              <div class="text-xs text-on-surface-variant font-mono mt-1 select-all cursor-pointer truncate" title="Klik untuk salin password">
+                🔑: {{ device.wifiPassword5g || 'None' }}
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- Spesifikasi Hardware Modem -->
+        <div v-if="device.brand || device.modelName || device.macAddress" class="bg-surface-container-low p-4 rounded-xl mb-4 border border-outline-variant">
+          <h4 class="font-bold text-on-surface mb-3 flex items-center gap-2">
+            <span class="material-symbols-outlined text-blue-500">memory</span> Spesifikasi Hardware Perangkat
+          </h4>
+          <div class="grid grid-cols-2 gap-y-3 gap-x-4 text-xs font-mono">
+            <div>
+              <span class="text-on-surface-variant block text-[10px]">Brand / Merk</span>
+              <span class="font-semibold text-on-surface">{{ device.brand || 'N/A' }}</span>
+            </div>
+            <div>
+              <span class="text-on-surface-variant block text-[10px]">Model / Seri</span>
+              <span class="font-semibold text-on-surface">{{ device.modelName || 'N/A' }}</span>
+            </div>
+            <div class="col-span-2">
+              <span class="text-on-surface-variant block text-[10px]">MAC Address</span>
+              <span class="font-semibold text-on-surface text-xs select-all">{{ device.macAddress || 'N/A' }}</span>
+            </div>
+            <div>
+              <span class="text-on-surface-variant block text-[10px]">Hardware Version</span>
+              <span class="font-semibold text-on-surface truncate block" :title="device.hardwareVersion">{{ device.hardwareVersion || 'N/A' }}</span>
+            </div>
+            <div>
+              <span class="text-on-surface-variant block text-[10px]">Software Version</span>
+              <span class="font-semibold text-on-surface truncate block" :title="device.softwareVersion">{{ device.softwareVersion || 'N/A' }}</span>
+            </div>
           </div>
         </div>
       </div>

@@ -104,6 +104,10 @@ export function parseInform(xmlString: string) {
     rxPower,
     cwmpId,
     cwmpNamespace,
+    manufacturer: getTagValue(xmlString, 'Manufacturer'),
+    modelName: getTagValue(xmlString, 'ProductClass'),
+    hardwareVersion: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.HardwareVersion'),
+    softwareVersion: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.SoftwareVersion'),
     deviceId: `${OUI}-${SerialNumber}`
   };
 }
@@ -117,14 +121,49 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     return match ? match[1] : null;
   };
 
+  // LAN Ports Status Summary (LAN 1 - LAN 4)
+  const lanPorts: string[] = [];
+  for (let i = 1; i <= 4; i++) {
+    const status = getParameterValue(xmlString, `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${i}.Status`);
+    const speed = getParameterValue(xmlString, `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${i}.MaxBitRate`);
+    if (status) {
+      const speedStr = speed && speed !== '0' && speed !== '-1' ? `${speed}Mbps` : '';
+      lanPorts.push(`LAN${i}:${status}${speedStr ? `(${speedStr})` : ''}`);
+    }
+  }
+  const lanStatus = lanPorts.length > 0 ? lanPorts.join(', ') : null;
+
+  // Associated Devices Sum (WLAN 2.4G + 5G)
+  const assoc24 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations') || '0', 10);
+  const assoc50 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations') || '0', 10);
+  const totalAssoc = (isNaN(assoc24) ? 0 : assoc24) + (isNaN(assoc50) ? 0 : assoc50);
+
   return {
     ssid: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'),
     password: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase') ||
               getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey'),
+    ssid5g: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID'),
+    password5g: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase') ||
+                getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey'),
+    lanStatus,
+    associatedDevices: totalAssoc,
+    brand: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.Manufacturer'),
+    modelName: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.ModelName'),
+    hardwareVersion: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.HardwareVersion'),
+    softwareVersion: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.SoftwareVersion'),
+    macAddress: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress') ||
+                getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.MACAddress') ||
+                getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.BSSID'),
     wanIp: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress'),
     rxPower: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower') ||
-             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower')
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower'),
+    txPower: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower'),
+    temperature: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature') ||
+                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature'),
+    voltage: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage')
   };
 }

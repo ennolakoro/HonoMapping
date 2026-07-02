@@ -142,19 +142,55 @@ const cwmpHandler = async (c: any) => {
       if (isHuawei) {
         currentParamsToRequest = [
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-          // EG8145V5: coba KeyPassphrase (lebih umum dari PreSharedKey.1.PreSharedKey)
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-          // Path GPON Huawei EG8145V5 yang benar (ditemukan dari discovery: Interafce typo)
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.MaxBitRate',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.MaxBitRate',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate',
+          'InternetGatewayDevice.DeviceInfo.Manufacturer',
+          'InternetGatewayDevice.DeviceInfo.ModelName',
+          'InternetGatewayDevice.DeviceInfo.HardwareVersion',
+          'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage',
         ];
       } else if (isZte) {
         currentParamsToRequest = [
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.MaxBitRate',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.MaxBitRate',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate',
+          'InternetGatewayDevice.DeviceInfo.Manufacturer',
+          'InternetGatewayDevice.DeviceInfo.ModelName',
+          'InternetGatewayDevice.DeviceInfo.HardwareVersion',
+          'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage',
         ];
       } else {
-        // Unknown vendor - minta SSID/Password saja, tidak ada parameter GPON
+        // Unknown vendor - minta SSID/Password saja
         currentParamsToRequest = [
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
@@ -164,7 +200,11 @@ const cwmpHandler = async (c: any) => {
       try {
         await db.update(clients)
           .set({
-            isOnline: true
+            isOnline: true,
+            brand: informData.manufacturer || undefined,
+            modelName: informData.modelName || undefined,
+            hardwareVersion: informData.hardwareVersion || undefined,
+            softwareVersion: informData.softwareVersion || undefined
           })
           .where(eq(clients.snModem, informData.SerialNumber))
       } catch (e) {
@@ -211,10 +251,22 @@ const cwmpHandler = async (c: any) => {
           .set({
             wifiSsid: params.ssid || undefined,
             wifiPassword: params.password || undefined,
-            rxPower: params.rxPower || undefined
+            wifiSsid5g: params.ssid5g || undefined,
+            wifiPassword5g: params.password5g || undefined,
+            lanStatus: params.lanStatus || undefined,
+            associatedDevices: params.associatedDevices || undefined,
+            brand: params.brand || undefined,
+            modelName: params.modelName || undefined,
+            hardwareVersion: params.hardwareVersion || undefined,
+            softwareVersion: params.softwareVersion || undefined,
+            macAddress: params.macAddress || undefined,
+            rxPower: params.rxPower || undefined,
+            txPower: params.txPower || undefined,
+            temperature: params.temperature || undefined,
+            voltage: params.voltage || undefined
           })
           .where(eq(clients.snModem, currentModemSN))
-        console.log(`[DB] Data modem ${currentModemSN} berhasil diupdate: SSID=${params.ssid}, RxPower=${params.rxPower}`)
+        console.log(`[DB] Data modem ${currentModemSN} berhasil diupdate: SSID=${params.ssid}, RxPower=${params.rxPower}, Temp=${params.temperature}, Volt=${params.voltage}`)
       } catch (e) {
         console.error("Gagal update parameter ke DB:", e)
       }
@@ -306,7 +358,19 @@ app.get('/api/protected/devices', async (c) => {
     snModem: client.snModem,
     wifiSsid: client.wifiSsid,
     wifiPassword: client.wifiPassword,
+    wifiSsid5g: client.wifiSsid5g,
+    wifiPassword5g: client.wifiPassword5g,
+    lanStatus: client.lanStatus,
+    associatedDevices: client.associatedDevices,
+    brand: client.brand,
+    modelName: client.modelName,
+    hardwareVersion: client.hardwareVersion,
+    softwareVersion: client.softwareVersion,
+    macAddress: client.macAddress,
     rxPower: client.rxPower,
+    txPower: client.txPower,
+    temperature: client.temperature,
+    voltage: client.voltage,
     isOnline: client.isOnline
   }))
 
