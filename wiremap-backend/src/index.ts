@@ -151,6 +151,57 @@ const isSameDeviceMac = (mac1: string, mac2: string): boolean => {
   return clean1.slice(0, 10) === clean2.slice(0, 10)
 }
 
+// Fungsi membersihkan data sampah/duplikat dan IP Publik NAT yang tidak valid di DB
+const cleanupOldGarbageData = async (db: any) => {
+  try {
+    console.log('[Cleanup] Memulai pembersihan IP Publik dan duplikat di DB...')
+    
+    // 1. Bersihkan IP Publik 36.75.220.32 dari semua data client (set ke null)
+    await db.update(clients)
+      .set({ wanIp: null })
+      .where(eq(clients.wanIp, '36.75.220.32'))
+
+    // 2. Cari semua record di DB
+    const all = await db.select().from(clients)
+    
+    // 3. Cari duplikat record ONT yang tidak memiliki koordinat (lat/lng kosong)
+    // dan tidak memiliki data wifi, tapi kita sudah punya record lain dengan MAC/PPPoE username yang sama
+    const toDeleteIds: number[] = []
+    
+    for (const c of all) {
+      if (c.wanIp && isPublicIp(c.wanIp)) {
+        await db.update(clients)
+          .set({ wanIp: null })
+          .where(eq(clients.id, c.id))
+      }
+
+      if (c.lat === null && c.lng === null && (c.name.startsWith('ONT-') || c.name.startsWith('MODEM-'))) {
+        // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip atau data lebih lengkap)
+        const hasBetterDuplicate = all.some((other: any) => 
+          other.id !== c.id && 
+          (
+            (other.pppoeUsername && other.snModem === c.snModem) ||
+            (c.macAddress && other.macAddress && isSameDeviceMac(c.macAddress, other.macAddress))
+          )
+        )
+        if (hasBetterDuplicate) {
+          toDeleteIds.push(c.id)
+        }
+      }
+    }
+
+    if (toDeleteIds.length > 0) {
+      console.log(`[Cleanup] Menghapus ${toDeleteIds.length} record duplikat yang tidak valid:`, toDeleteIds)
+      for (const id of toDeleteIds) {
+        await db.delete(clients).where(eq(clients.id, id))
+      }
+    }
+    console.log('[Cleanup] Pembersihan selesai.')
+  } catch (err) {
+    console.error('[Cleanup] Gagal membersihkan data sampah:', err)
+  }
+}
+
 // Global state untuk tracking CWMP session per IP client (multi-session)
 interface CwmpSession {
   waitingForEmptyPost: boolean;
@@ -236,12 +287,10 @@ const cwmpHandler = async (c: any) => {
         softwareVersion: informData.softwareVersion || undefined,
       }
 
-      // Lindungi wanIp / lanIp agar tidak ter-NAT menjadi IP Publik yang sama
+      // Lindungi wanIp / lanIp agar tidak ter-NAT menjadi IP Publik yang sama.
+      // IP request lokal adalah IP manajemen CPE, bukan WAN PPPoE publik.
       if (currentClientIp) {
-        updatePayload.wanIp = currentClientIp
-      } else if (existing[0] && !existing[0].wanIp) {
-        // Fallback terakhir: simpan IP request jika DB masih kosong
-        updatePayload.wanIp = clientIp
+        updatePayload.lanIp = currentClientIp
       }
 
       if (existing[0]) {
@@ -256,7 +305,8 @@ const cwmpHandler = async (c: any) => {
         const inserted = await db.insert(clients).values({
           name: clientName,
           snModem: informData.SerialNumber,
-          wanIp: currentClientIp || clientIp,
+          wanIp: null,
+          lanIp: currentClientIp || null,
           isOnline: true,
           brand: informData.manufacturer || null,
           modelName: informData.modelName || null,
@@ -439,7 +489,8 @@ const cwmpHandler = async (c: any) => {
             hardwareVersion: params.hardwareVersion ?? null,
             softwareVersion: params.softwareVersion ?? null,
             macAddress: params.macAddress ?? null,
-            wanIp: params.wanIp ?? clientIp ?? null,
+            wanIp: params.wanIp && !isPublicIp(params.wanIp) ? params.wanIp : null,
+            lanIp: isPublicIp(clientIp) ? undefined : clientIp,
             rxPower: params.rxPower ?? null,
             txPower: params.txPower ?? null,
             temperature: params.temperature ?? null,
@@ -645,6 +696,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
 app.get('/api/protected/devices', async (c) => {
   try {
     const db = getDb(c.env)
+    await cleanupOldGarbageData(db)
     const allDevices = await db.select().from(devices)
     const allClients = await db.select().from(clients)
 
@@ -653,9 +705,8 @@ app.get('/api/protected/devices', async (c) => {
       const cType = client.clientType || 'PPPOE'
       // triggerIp: IP yang dipakai untuk trigger CWMP
       // Modem HOTSPOT tidak punya wanIp (PPPoE), pakai lanIp
-      const triggerIp = (cType === 'HOTSPOT' || !client.wanIp)
-        ? (client.lanIp || client.wanIp)
-        : client.wanIp
+      const safeWanIp = client.wanIp && !isPublicIp(client.wanIp) ? client.wanIp : null
+      const triggerIp = client.lanIp || safeWanIp
       return {
         id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
         type: 'CLIENT',
@@ -677,7 +728,7 @@ app.get('/api/protected/devices', async (c) => {
         hardwareVersion: client.hardwareVersion,
         softwareVersion: client.softwareVersion,
         macAddress: client.macAddress,
-        wanIp: client.wanIp,
+        wanIp: safeWanIp,
         lanIp: client.lanIp,
         clientType: cType,
         triggerIp,

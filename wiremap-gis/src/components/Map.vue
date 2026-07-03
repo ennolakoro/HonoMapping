@@ -57,8 +57,30 @@ const stopProgressPolling = () => {
   }
 }
 
-// Helper: dapatkan triggerIp client (lanIp untuk HOTSPOT, wanIp untuk PPPoE)
-const getClientTriggerIp = (client) => client.triggerIp || client.lanIp || client.wanIp || null
+const isPublicIp = (ip) => {
+  if (!ip || typeof ip !== 'string') return false
+  const cleanIp = ip.trim()
+  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(cleanIp)) return false
+  if (cleanIp.startsWith('10.')) return false
+  if (cleanIp.startsWith('192.168.')) return false
+  if (cleanIp.startsWith('172.')) {
+    const second = parseInt(cleanIp.split('.')[1], 10)
+    if (second >= 16 && second <= 31) return false
+  }
+  return true
+}
+
+const getSafeClientIp = (ip) => ip && !isPublicIp(ip) ? ip : null
+
+// Helper: dapatkan triggerIp client. Jangan pakai IP publik NAT karena bisa sama untuk banyak ONT.
+const getClientTriggerIp = (client) =>
+  getSafeClientIp(client?.lanIp) ||
+  getSafeClientIp(client?.triggerIp) ||
+  getSafeClientIp(client?.wanIp) ||
+  null
+
+const getClientDisplayIp = (client) =>
+  getClientTriggerIp(client) || 'IP manajemen belum ada'
 
 const getSyncProgress = (client) => {
   const ip = getClientTriggerIp(client)
@@ -151,10 +173,6 @@ const hasModemData = (device) => [
   device?.voltage
 ].some(value => value !== null && value !== undefined && value !== '')
 
-const informedClients = computed(() =>
-  allDevicesData.value.filter(device => device.type === 'CLIENT' && hasModemData(device))
-)
-
 const matchesWorkflowSearch = (device) => {
   const query = workflowSearch.value.trim().toLowerCase()
   if (!query) return true
@@ -162,6 +180,7 @@ const matchesWorkflowSearch = (device) => {
     device?.name,
     device?.pppoeUsername,
     device?.wanIp,
+    device?.lanIp,
     device?.snModem
   ].some(value => String(value || '').toLowerCase().includes(query))
 }
@@ -174,10 +193,6 @@ const visibleUnmappedClients = computed(() => {
     return true
   })
 })
-
-const visibleInformedClients = computed(() =>
-  informedClients.value.filter(matchesWorkflowSearch)
-)
 
 const informableClients = computed(() =>
   visibleUnmappedClients.value.filter(device => !!getClientTriggerIp(device))
@@ -858,14 +873,14 @@ onUnmounted(() => {
                 <div class="flex items-center gap-1 mt-0.5">
                   <span class="text-[9px] px-1 py-0.5 rounded font-bold uppercase tracking-wider leading-none"
                     :class="hasModemData(client) ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/20' : 'bg-amber-950/80 text-amber-400 border border-amber-500/20'">
-                    {{ hasModemData(client) ? 'Informed' : 'Belum Inform' }}
+                    {{ hasModemData(client) ? 'Ready Plot' : 'Belum Inform' }}
                   </span>
                   <!-- Badge tipe koneksi -->
                   <span class="client-type-badge" :class="client.clientType === 'HOTSPOT' ? 'hotspot' : 'pppoe'">
-                    {{ client.clientType === 'HOTSPOT' ? '📶 Hotspot' : '🔵 PPPoE' }}
+                    {{ client.clientType === 'HOTSPOT' ? 'Hotspot' : 'PPPoE' }}
                   </span>
                   <span class="text-slate-400 text-[10px] truncate max-w-[90px]">
-                    {{ client.triggerIp || client.wanIp || client.lanIp || 'IP belum aktif' }}
+                    {{ getClientDisplayIp(client) }}
                   </span>
                 </div>
               </div>
@@ -899,16 +914,6 @@ onUnmounted(() => {
             </div>
           </div>
         </article>
-
-        <div v-if="visibleInformedClients.length" class="workflow-informed">
-          <div class="workflow-label">Sudah Inform</div>
-          <div v-for="client in visibleInformedClients" :key="`informed-${client.id}`" class="workflow-informed-row">
-            <span class="client-node-dot is-informed"></span>
-            <strong>{{ client.name }}</strong>
-            <span class="client-type-badge text-[8px]" :class="client.clientType === 'HOTSPOT' ? 'hotspot' : 'pppoe'">{{ client.clientType === 'HOTSPOT' ? 'Hotspot' : 'PPPoE' }}</span>
-            <small>{{ client.triggerIp || client.wanIp || client.snModem || 'Data modem tersimpan' }}</small>
-          </div>
-        </div>
 
         <div class="workflow-actions">
           <button type="button" @click="handleRefreshQueue">
