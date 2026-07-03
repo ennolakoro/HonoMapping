@@ -386,11 +386,6 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
     return c.json({ error: 'Gagal men-trigger modem', details: err.message }, 502)
   }
 })
-    return c.json({ message: `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal` })
-  } catch (err: any) {
-    return c.json({ error: 'Gagal men-trigger modem', details: err.message }, 502)
-  }
-})
 
 // Endpoint Topologi
 app.get('/api/protected/devices', async (c) => {
