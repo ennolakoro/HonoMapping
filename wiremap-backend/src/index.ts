@@ -95,7 +95,7 @@ app.post('/api/auth/login', async (c) => {
   return c.json({ error: 'Invalid credentials' }, 401)
 })
 
-import { getPppoeActive, triggerModemCWMP } from './mikrotik'
+import { getPppoeActive, triggerModemCWMP, getDhcpLeases } from './mikrotik'
 import { createInformResponse, createGetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
@@ -584,35 +584,46 @@ app.get('/api/protected/devices', async (c) => {
     const allClients = await db.select().from(clients)
 
     // Mapping client agar kompatibel dengan data topology (node tree map)
-    const mappedClients = allClients.map(client => ({
-      id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
-      type: 'CLIENT',
-      name: client.name,
-      phone: client.phone,
-      parentId: client.odpId,
-      lat: client.lat,
-      lng: client.lng,
-      pppoeUsername: client.pppoeUsername,
-      snModem: client.snModem,
-      wifiSsid: client.wifiSsid,
-      wifiPassword: client.wifiPassword,
-      wifiSsid5g: client.wifiSsid5g,
-      wifiPassword5g: client.wifiPassword5g,
-      lanStatus: client.lanStatus,
-      associatedDevices: client.associatedDevices,
-      brand: client.brand,
-      modelName: client.modelName,
-      hardwareVersion: client.hardwareVersion,
-      softwareVersion: client.softwareVersion,
-      macAddress: client.macAddress,
-      wanIp: client.wanIp,
-      rxPower: client.rxPower,
-      txPower: client.txPower,
-      temperature: client.temperature,
-      voltage: client.voltage,
-      isOnline: client.isOnline,
-      cablePath: client.cablePath
-    }))
+    const mappedClients = allClients.map(client => {
+      const cType = client.clientType || 'PPPOE'
+      // triggerIp: IP yang dipakai untuk trigger CWMP
+      // Modem HOTSPOT tidak punya wanIp (PPPoE), pakai lanIp
+      const triggerIp = (cType === 'HOTSPOT' || !client.wanIp)
+        ? (client.lanIp || client.wanIp)
+        : client.wanIp
+      return {
+        id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
+        type: 'CLIENT',
+        name: client.name,
+        phone: client.phone,
+        parentId: client.odpId,
+        lat: client.lat,
+        lng: client.lng,
+        pppoeUsername: client.pppoeUsername,
+        snModem: client.snModem,
+        wifiSsid: client.wifiSsid,
+        wifiPassword: client.wifiPassword,
+        wifiSsid5g: client.wifiSsid5g,
+        wifiPassword5g: client.wifiPassword5g,
+        lanStatus: client.lanStatus,
+        associatedDevices: client.associatedDevices,
+        brand: client.brand,
+        modelName: client.modelName,
+        hardwareVersion: client.hardwareVersion,
+        softwareVersion: client.softwareVersion,
+        macAddress: client.macAddress,
+        wanIp: client.wanIp,
+        lanIp: client.lanIp,
+        clientType: cType,
+        triggerIp,
+        rxPower: client.rxPower,
+        txPower: client.txPower,
+        temperature: client.temperature,
+        voltage: client.voltage,
+        isOnline: client.isOnline,
+        cablePath: client.cablePath
+      }
+    })
 
     return c.json([...allDevices, ...mappedClients])
   } catch (err: any) {
@@ -697,6 +708,134 @@ app.get('/api/network-topology', (c) => {
 
 // Endpoint Auto-Discovery: tarik data PPPoE ke daftar tunggu plotting.
 // Sync ini non-destruktif: topology OLT/ODC/ODP dan koordinat client yang sudah diplot tidak dihapus.
+// ============================================================
+// Endpoint Sync DHCP Leases - Deteksi Modem Non-PPPoE (HOTSPOT)
+// Cara kerja:
+// 1. Tarik PPPoE active dari Mikrotik (via bridge) → kumpulkan semua MAC
+// 2. Tarik DHCP leases dari Mikrotik (via bridge)
+// 3. Setiap DHCP lease dicek MAC-nya:
+//    - MAC ada di PPPoE → update client PPPoE yang sudah ada, tambahkan lanIp
+//    - MAC tidak ada di PPPoE → ini modem HOTSPOT → insert/update sebagai HOTSPOT
+// ============================================================
+app.post('/api/protected/sync-dhcp-leases', async (c) => {
+  try {
+    const db = getDb(c.env)
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
+
+    if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
+      return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi' }, 500)
+    }
+
+    // === Langkah 1: Kumpulkan semua MAC Address dari PPPoE Active ===
+    let pppoeMacs = new Set<string>()
+    try {
+      const pppoeList = await getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+      for (const p of pppoeList) {
+        const mac = (p['caller-id'] || p.callerId || p.macAddress || p.mac || '').toLowerCase().trim()
+        if (mac) pppoeMacs.add(mac)
+      }
+      console.log(`[DHCP Sync] PPPoE MACs terkumpul: ${pppoeMacs.size}`)
+    } catch (err) {
+      console.warn('[DHCP Sync] Gagal mengambil PPPoE active (lanjut tanpa cross-ref):', err)
+    }
+
+    // === Langkah 2: Ambil semua DHCP Leases aktif ===
+    const leases = await getDhcpLeases(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+    if (!leases || leases.length === 0) {
+      return c.json({ message: 'Tidak ada DHCP lease aktif.', total: 0, created: 0, updated: 0, skipped: 0 })
+    }
+
+    console.log(`[DHCP Sync] Total DHCP lease aktif: ${leases.length}`)
+
+    let created = 0, updated = 0, skipped = 0
+
+    for (const lease of leases) {
+      const mac = (lease['mac-address'] || '').toLowerCase().trim()
+      const ip = lease.address
+      const hostName = lease['host-name'] || ''
+      const serverName = lease.server || ''
+
+      if (!mac || !ip) {
+        skipped++
+        continue
+      }
+
+      // === Langkah 3: Klasifikasi berdasarkan cross-reference MAC vs PPPoE ===
+      if (pppoeMacs.has(mac)) {
+        // MAC ini milik PPPoE user → update client PPPoE yang sudah ada
+        // Cari client dengan MAC atau PPPoE username yang cocok
+        const existingByMac = await db.select()
+          .from(clients)
+          .where(eq(clients.macAddress, mac))
+          .limit(1)
+
+        if (existingByMac[0]) {
+          // Update lanIp untuk client PPPoE yang sudah ada
+          await db.update(clients)
+            .set({ lanIp: ip, isOnline: true })
+            .where(eq(clients.id, existingByMac[0].id))
+          updated++
+          console.log(`[DHCP Sync] PPPoE client updated lanIp: ${existingByMac[0].name} → ${ip}`)
+        } else {
+          // Client PPPoE belum ada entri MAC tapi sudah ada sebagai PPPoE
+          skipped++
+        }
+        continue
+      }
+
+      // === MAC tidak ada di PPPoE → ini modem HOTSPOT (non-PPPoE) ===
+      const clientName = hostName
+        ? hostName.replace(/[^a-zA-Z0-9\-_. ]/g, '').trim()
+        : `HOTSPOT-${mac.toUpperCase().replace(/:/g, '').slice(-6)}`
+
+      // Cek apakah sudah ada berdasarkan MAC address
+      const existingByMac = await db.select()
+        .from(clients)
+        .where(eq(clients.macAddress, mac))
+        .limit(1)
+
+      if (existingByMac[0]) {
+        // Update data yang sudah ada
+        await db.update(clients)
+          .set({
+            lanIp: ip,
+            clientType: 'HOTSPOT',
+            isOnline: true
+          })
+          .where(eq(clients.id, existingByMac[0].id))
+        updated++
+        console.log(`[DHCP Sync] HOTSPOT updated: ${existingByMac[0].name} → ${ip}`)
+      } else {
+        // Insert client HOTSPOT baru ke antrian
+        await db.insert(clients).values({
+          name: clientName,
+          lanIp: ip,
+          macAddress: mac,
+          clientType: 'HOTSPOT',
+          isOnline: true,
+          lat: null,
+          lng: null,
+          odpId: null
+        })
+        created++
+        console.log(`[DHCP Sync] HOTSPOT baru masuk antrian: ${clientName} (${ip})`)
+      }
+    }
+
+    return c.json({
+      success: true,
+      message: `Sync DHCP selesai: ${created} modem hotspot baru, ${updated} diperbarui, ${skipped} di-skip.`,
+      total: leases.length,
+      created,
+      updated,
+      skipped
+    })
+  } catch (err: any) {
+    console.error('[DHCP Sync] Error:', err)
+    return c.json({ error: 'Gagal sync DHCP lease', details: err.message }, 500)
+  }
+})
+
 app.post('/api/sync-real-mikrotik', async (c) => {
   return c.json({
     error: 'Endpoint sync lama sudah dipindahkan',

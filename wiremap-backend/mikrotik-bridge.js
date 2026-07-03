@@ -102,6 +102,50 @@ app.post('/trigger-modem', async (req, res) => {
     }
 });
 
+// Endpoint untuk mengambil semua DHCP Lease aktif dari Mikrotik
+// Digunakan backend untuk mendeteksi modem yang tidak punya PPPoE (tipe HOTSPOT)
+// Logika klasifikasi: MAC ada di PPPoE active = PPPoE, tidak ada = HOTSPOT
+app.get('/dhcp-leases', async (req, res) => {
+    const { host, port } = getMikrotikHostInfo();
+    const user = process.env.MIKROTIK_USER;
+    const password = process.env.MIKROTIK_PASS;
+
+    if (!host || !user || !password) {
+        return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
+    }
+
+    const api = new RouterOSClient({ host, user, password, port });
+    api.on('error', (err) => console.log('RouterOS Error:', err.message));
+
+    try {
+        console.log(`Mengambil DHCP lease dari Mikrotik ${host}:${port}...`);
+        const client = await api.connect();
+
+        // Ambil semua DHCP lease dari semua DHCP server
+        const leases = await client.menu('/ip/dhcp-server/lease').get();
+
+        api.close();
+
+        // Format field agar konsisten dengan yang diharapkan backend
+        const formatted = leases.map(lease => ({
+            address:       lease.address || '',
+            'mac-address': lease['mac-address'] || lease.macAddress || '',
+            server:        lease.server || '',
+            'host-name':   lease['host-name'] || lease.hostName || '',
+            status:        lease.status || '',
+            comment:       lease.comment || ''
+        }));
+
+        // Hanya kirim yang aktif (status = 'bound')
+        const active = formatted.filter(l => l.status === 'bound');
+        console.log(`Berhasil mendapatkan ${active.length} DHCP lease aktif dari total ${formatted.length}.`);
+        res.json(active);
+    } catch (err) {
+        console.error('Gagal mengambil DHCP lease dari Mikrotik:', err);
+        res.status(502).json({ error: 'Gagal mengambil DHCP lease', details: err.message });
+    }
+});
+
 const PORT = 3005;
 app.listen(PORT, () => {
     console.log(`=================================================`);

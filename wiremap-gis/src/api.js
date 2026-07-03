@@ -65,14 +65,74 @@ export const api = {
     return res.json();
   },
 
-  async syncModem(ip) {
-    const res = await fetch(`${API_URL}/protected/modem/${ip}/sync`, {
+  async syncMikrotik() {
+    const res = await fetch(`${API_URL}/protected/sync-real-mikrotik`, {
       method: 'POST',
       headers: {
         'Authorization': `Bearer ${authToken}`
       }
     });
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = {};
+    }
+    if (!res.ok) {
+      if (res.status === 404) {
+        throw new Error('Endpoint sync tidak ditemukan. Backend Hono yang sedang jalan belum update/restart.')
+      }
+      if (res.status === 401) {
+        throw new Error('Sesi login habis. Silakan login ulang.')
+      }
+      throw new Error(data.details || data.error || raw || `Gagal sync Mikrotik (${res.status})`);
+    }
+    return data;
+  },
+
+  // Sync DHCP lease - deteksi modem non-PPPoE (HOTSPOT)
+  async syncDhcpLeases() {
+    const res = await fetch(`${API_URL}/protected/sync-dhcp-leases`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = {};
+    }
+    if (!res.ok) {
+      throw new Error(data.details || data.error || raw || `Gagal sync DHCP (${res.status})`);
+    }
+    return data;
+  },
+
+  // Trigger CWMP sync ke modem berdasarkan IP (wanIp untuk PPPoE, lanIp untuk HOTSPOT)
+  async syncModem(ip, deviceId = null) {
+    const res = await fetch(`${API_URL}/protected/modem/${ip}/sync`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ deviceId })
+    });
     if (!res.ok) throw new Error('Gagal sync modem');
+    return res.json();
+  },
+
+  async getModemSyncStatus() {
+    const res = await fetch(`${API_URL}/protected/modem/sync-status`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    if (!res.ok) throw new Error('Gagal mengambil status sinkronisasi');
     return res.json();
   },
 
@@ -122,6 +182,19 @@ export const api = {
       body: JSON.stringify(deviceData)
     });
     if (!res.ok) throw new Error('Gagal memperbarui detail perangkat');
+    return res.json();
+  },
+
+  async deleteDevice(id, type) {
+    const res = await fetch(`${API_URL}/protected/devices/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify({ type })
+    });
+    if (!res.ok) throw new Error('Gagal menghapus perangkat');
     return res.json();
   }
 };
