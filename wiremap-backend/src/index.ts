@@ -389,42 +389,47 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
 
 // Endpoint Topologi
 app.get('/api/protected/devices', async (c) => {
-  const db = getDb(c.env)
-  const allDevices = await db.select().from(devices)
-  const allClients = await db.select().from(clients)
+  try {
+    const db = getDb(c.env)
+    const allDevices = await db.select().from(devices)
+    const allClients = await db.select().from(clients)
 
-  // Mapping client agar kompatibel dengan data topology (node tree map)
-  const mappedClients = allClients.map(client => ({
-    id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
-    type: 'CLIENT',
-    name: client.name,
-    phone: client.phone,
-    parentId: client.odpId,
-    lat: client.lat,
-    lng: client.lng,
-    pppoeUsername: client.pppoeUsername,
-    snModem: client.snModem,
-    wifiSsid: client.wifiSsid,
-    wifiPassword: client.wifiPassword,
-    wifiSsid5g: client.wifiSsid5g,
-    wifiPassword5g: client.wifiPassword5g,
-    lanStatus: client.lanStatus,
-    associatedDevices: client.associatedDevices,
-    brand: client.brand,
-    modelName: client.modelName,
-    hardwareVersion: client.hardwareVersion,
-    softwareVersion: client.softwareVersion,
-    macAddress: client.macAddress,
-    wanIp: client.wanIp,
-    rxPower: client.rxPower,
-    txPower: client.txPower,
-    temperature: client.temperature,
-    voltage: client.voltage,
-    isOnline: client.isOnline,
-    cablePath: client.cablePath
-  }))
+    // Mapping client agar kompatibel dengan data topology (node tree map)
+    const mappedClients = allClients.map(client => ({
+      id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
+      type: 'CLIENT',
+      name: client.name,
+      phone: client.phone,
+      parentId: client.odpId,
+      lat: client.lat,
+      lng: client.lng,
+      pppoeUsername: client.pppoeUsername,
+      snModem: client.snModem,
+      wifiSsid: client.wifiSsid,
+      wifiPassword: client.wifiPassword,
+      wifiSsid5g: client.wifiSsid5g,
+      wifiPassword5g: client.wifiPassword5g,
+      lanStatus: client.lanStatus,
+      associatedDevices: client.associatedDevices,
+      brand: client.brand,
+      modelName: client.modelName,
+      hardwareVersion: client.hardwareVersion,
+      softwareVersion: client.softwareVersion,
+      macAddress: client.macAddress,
+      wanIp: client.wanIp,
+      rxPower: client.rxPower,
+      txPower: client.txPower,
+      temperature: client.temperature,
+      voltage: client.voltage,
+      isOnline: client.isOnline,
+      cablePath: client.cablePath
+    }))
 
-  return c.json([...allDevices, ...mappedClients])
+    return c.json([...allDevices, ...mappedClients])
+  } catch (err: any) {
+    console.error('Error fetching topology devices:', err)
+    return c.json({ error: 'Gagal mengambil data topologi', details: err.message }, 500)
+  }
 })
 
 // Endpoint Mikrotik Real-Time
