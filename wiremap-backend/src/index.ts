@@ -192,11 +192,9 @@ const cleanupOldGarbageData = async (db: any) => {
       }
 
       if (
-        c.lat === null &&
-        c.lng === null &&
-        (c.name.startsWith('ONT-') || c.name.startsWith('MODEM-') || c.clientType === 'HOTSPOT')
+        c.name.startsWith('ONT-') || c.name.startsWith('MODEM-') || c.clientType === 'HOTSPOT'
       ) {
-        // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip, atau lanIp/wanIp yang sama, atau data lebih lengkap)
+        // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip, atau lanIp/wanIp yang sama)
         const betterDuplicate = all.find((other: any) =>
           other.id !== c.id && 
           (
@@ -205,8 +203,9 @@ const cleanupOldGarbageData = async (db: any) => {
             (c.lanIp && other.lanIp && c.lanIp === other.lanIp) ||
             (c.wanIp && other.wanIp && c.wanIp === other.wanIp)
           ) &&
-          // Prioritaskan yang ada pppoeUsername atau yang sudah di-plot (ada koordinat)
-          (other.pppoeUsername || (other.lat !== null && other.lng !== null) || (other.clientType === 'PPPOE' && c.clientType !== 'PPPOE'))
+          // Jadikan 'other' sebagai master jika dia adalah akun PPPoE asli
+          // ATAU jika 'other' sudah diplot sedangkan 'c' belum
+          (other.pppoeUsername || (other.lat !== null && c.lat === null) || (other.clientType === 'PPPOE' && c.clientType !== 'PPPOE'))
         )
 
         if (betterDuplicate) {
@@ -229,7 +228,11 @@ const cleanupOldGarbageData = async (db: any) => {
             txPower: betterDuplicate.txPower || c.txPower || undefined,
             temperature: betterDuplicate.temperature || c.temperature || undefined,
             voltage: betterDuplicate.voltage || c.voltage || undefined,
-            isOnline: betterDuplicate.isOnline || c.isOnline || undefined
+            isOnline: betterDuplicate.isOnline || c.isOnline || undefined,
+            lat: betterDuplicate.lat !== null ? betterDuplicate.lat : (c.lat !== null ? c.lat : undefined),
+            lng: betterDuplicate.lng !== null ? betterDuplicate.lng : (c.lng !== null ? c.lng : undefined),
+            odpId: betterDuplicate.odpId !== null ? betterDuplicate.odpId : (c.odpId !== null ? c.odpId : undefined),
+            cablePath: betterDuplicate.cablePath || c.cablePath || undefined,
           })
           await db.update(clients)
             .set(merged)
