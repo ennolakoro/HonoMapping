@@ -123,6 +123,34 @@ const getClientIp = (c: any) => {
   return '127.0.0.1'
 }
 
+// Cek apakah IP adalah IP Publik (untuk menghindari duplikasi IP NAT)
+const isPublicIp = (ip: string): boolean => {
+  if (!ip) return false
+  const cleanIp = ip.trim()
+  if (cleanIp === '127.0.0.1' || cleanIp === '::1' || cleanIp === 'localhost') return false
+  // IP lokal range (RFC 1918)
+  if (cleanIp.startsWith('10.')) return false
+  if (cleanIp.startsWith('192.168.')) return false
+  if (cleanIp.startsWith('172.')) {
+    const parts = cleanIp.split('.')
+    if (parts.length >= 2) {
+      const second = parseInt(parts[1], 10)
+      if (second >= 16 && second <= 31) return false
+    }
+  }
+  return true
+}
+
+// Bandingkan MAC address dengan toleransi 5 byte pertama (10 karakter)
+// Digunakan untuk mencocokkan port PPPoE dan DHCP management di modem yang sama
+const isSameDeviceMac = (mac1: string, mac2: string): boolean => {
+  if (!mac1 || !mac2) return false
+  const clean1 = mac1.toLowerCase().replace(/[^a-f0-9]/g, '')
+  const clean2 = mac2.toLowerCase().replace(/[^a-f0-9]/g, '')
+  if (clean1.length < 10 || clean2.length < 10) return false
+  return clean1.slice(0, 10) === clean2.slice(0, 10)
+}
+
 // Global state untuk tracking CWMP session per IP client (multi-session)
 interface CwmpSession {
   waitingForEmptyPost: boolean;
@@ -195,26 +223,40 @@ const cwmpHandler = async (c: any) => {
       let clientId: number | null = null
       let clientName = `ONT-${informData.SerialNumber}`
 
+      // Tentukan IP modem yang valid. Jangan gunakan IP Publik jika ada alternatif IP lokal
+      const currentClientIp = informData.ipAddress && !isPublicIp(informData.ipAddress)
+        ? informData.ipAddress
+        : (isPublicIp(clientIp) ? null : clientIp)
+
+      const updatePayload: Record<string, any> = {
+        isOnline: true,
+        brand: informData.manufacturer || undefined,
+        modelName: informData.modelName || undefined,
+        hardwareVersion: informData.hardwareVersion || undefined,
+        softwareVersion: informData.softwareVersion || undefined,
+      }
+
+      // Lindungi wanIp / lanIp agar tidak ter-NAT menjadi IP Publik yang sama
+      if (currentClientIp) {
+        updatePayload.wanIp = currentClientIp
+      } else if (existing[0] && !existing[0].wanIp) {
+        // Fallback terakhir: simpan IP request jika DB masih kosong
+        updatePayload.wanIp = clientIp
+      }
+
       if (existing[0]) {
         clientId = existing[0].id
         clientName = existing[0].name
         // Update status online & basic info
         await db.update(clients)
-          .set({
-            isOnline: true,
-            brand: informData.manufacturer || undefined,
-            modelName: informData.modelName || undefined,
-            hardwareVersion: informData.hardwareVersion || undefined,
-            softwareVersion: informData.softwareVersion || undefined,
-            wanIp: informData.ipAddress || clientIp
-          })
+          .set(updatePayload)
           .where(eq(clients.id, clientId))
       } else {
         // Auto-Discovery: CPE belum terdaftar! Auto insert ke tabel clients!
         const inserted = await db.insert(clients).values({
           name: clientName,
           snModem: informData.SerialNumber,
-          wanIp: informData.ipAddress || clientIp,
+          wanIp: currentClientIp || clientIp,
           isOnline: true,
           brand: informData.manufacturer || null,
           modelName: informData.modelName || null,
@@ -229,67 +271,90 @@ const cwmpHandler = async (c: any) => {
         console.log(`[MiniACS] Auto-created client record for unknown Serial Number: ${informData.SerialNumber}`)
       }
       
-      const isHuawei = informData.OUI === '00259E' || (informData.OUI && informData.OUI.toUpperCase().includes('HW')) || (informData.manufacturer && informData.manufacturer.toUpperCase().includes('HUA'));
-      const isZte = informData.OUI === '00200A' || (informData.OUI && informData.OUI.toUpperCase().includes('ZTE')) || (informData.manufacturer && informData.manufacturer.toUpperCase().includes('ZTE'));
-      
+      // Deteksi brand secara dinamis untuk request parameter yang akurat (Generic / Multi-Brand)
+      const manufacturerUpper = (informData.manufacturer || '').toUpperCase()
+      const ouiUpper = (informData.OUI || '').toUpperCase()
+      const modelUpper = (informData.modelName || '').toUpperCase()
+
+      const isHuawei = ouiUpper === '00259E' || manufacturerUpper.includes('HUA') || ouiUpper.includes('HW')
+      const isZte = ouiUpper === '00200A' || manufacturerUpper.includes('ZTE')
+      const isFiberhome = ouiUpper === '00d0d0' || manufacturerUpper.includes('FIBER') || manufacturerUpper.includes('FHTT') || modelUpper.includes('AN5506')
+      const isNokia = ouiUpper === '001A9A' || ouiUpper === '0023F7' || manufacturerUpper.includes('NOK') || manufacturerUpper.includes('ALCA')
+      const isVsol = manufacturerUpper.includes('VSOL') || manufacturerUpper.includes('V-SOL') || manufacturerUpper.includes('NETLINK')
+
       let paramsToReq: string[] = []
+      
+      // Parameter standar WLAN untuk semua ONT
+      const baseWlanParams = [
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
+        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
+        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
+        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
+      ]
+
       if (isHuawei) {
+        console.log(`[ACS Brand] Deteksi Huawei ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
+          ...baseWlanParams,
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.MaxBitRate',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.MaxBitRate',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate',
-          'InternetGatewayDevice.DeviceInfo.Manufacturer',
-          'InternetGatewayDevice.DeviceInfo.ModelName',
-          'InternetGatewayDevice.DeviceInfo.HardwareVersion',
-          'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage',
-        ];
+        ]
       } else if (isZte) {
+        console.log(`[ACS Brand] Deteksi ZTE ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+          ...baseWlanParams,
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.MaxBitRate',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.MaxBitRate',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate',
-          'InternetGatewayDevice.DeviceInfo.Manufacturer',
-          'InternetGatewayDevice.DeviceInfo.ModelName',
-          'InternetGatewayDevice.DeviceInfo.HardwareVersion',
-          'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage',
-        ];
-      } else {
+        ]
+      } else if (isFiberhome) {
+        console.log(`[ACS Brand] Deteksi Fiberhome ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
-        ];
+          ...baseWlanParams,
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.TxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.Temperature',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.SupplyVoltage',
+        ]
+      } else if (isNokia) {
+        console.log(`[ACS Brand] Deteksi Nokia ONT untuk SN: ${informData.SerialNumber}`)
+        paramsToReq = [
+          ...baseWlanParams,
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower',
+        ]
+      } else if (isVsol) {
+        console.log(`[ACS Brand] Deteksi VSOL/XPON ONT untuk SN: ${informData.SerialNumber}`)
+        paramsToReq = [
+          ...baseWlanParams,
+          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
+        ]
+      } else {
+        // Fallback: Parameter generic / brand lain
+        console.log(`[ACS Brand] Deteksi Brand Generic/Lainnya (${informData.manufacturer}) untuk SN: ${informData.SerialNumber}`)
+        paramsToReq = [
+          ...baseWlanParams,
+          // Coba request standard GPON TR-098 path optik
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
+        ]
       }
-
+ 
       session = {
         waitingForEmptyPost: true,
         currentModemSN: informData.SerialNumber,
@@ -726,15 +791,25 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
       return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi' }, 500)
     }
 
-    // === Langkah 1: Kumpulkan semua MAC Address dari PPPoE Active ===
-    let pppoeMacs = new Set<string>()
+    // === Langkah 1: Kumpulkan data PPPoE Active ===
+    interface PppoeClientInfo {
+      username: string;
+      mac: string;
+      ip: string;
+    }
+    let pppoeClients: PppoeClientInfo[] = []
+    
     try {
       const pppoeList = await getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
       for (const p of pppoeList) {
+        const username = p.name || p.user || p.username || ''
         const mac = (p['caller-id'] || p.callerId || p.macAddress || p.mac || '').toLowerCase().trim()
-        if (mac) pppoeMacs.add(mac)
+        const ip = p.address || p['remote-address'] || p.remoteAddress || ''
+        if (mac || username) {
+          pppoeClients.push({ username, mac, ip })
+        }
       }
-      console.log(`[DHCP Sync] PPPoE MACs terkumpul: ${pppoeMacs.size}`)
+      console.log(`[DHCP Sync] PPPoE Clients terkumpul: ${pppoeClients.length}`)
     } catch (err) {
       console.warn('[DHCP Sync] Gagal mengambil PPPoE active (lanjut tanpa cross-ref):', err)
     }
@@ -745,7 +820,7 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
       return c.json({ message: 'Tidak ada DHCP lease aktif.', total: 0, created: 0, updated: 0, skipped: 0 })
     }
 
-    console.log(`[DHCP Sync] Total DHCP lease aktif: ${leases.length}`)
+    console.log(`[DHCP Sync] Total DHCP lease aktif dari router: ${leases.length}`)
 
     let created = 0, updated = 0, skipped = 0
 
@@ -753,58 +828,85 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
       const mac = (lease['mac-address'] || '').toLowerCase().trim()
       const ip = lease.address
       const hostName = lease['host-name'] || ''
-      const serverName = lease.server || ''
+      const serverName = (lease.server || '').toLowerCase()
 
       if (!mac || !ip) {
         skipped++
         continue
       }
 
-      // === Langkah 3: Klasifikasi berdasarkan cross-reference MAC vs PPPoE ===
-      if (pppoeMacs.has(mac)) {
-        // MAC ini milik PPPoE user → update client PPPoE yang sudah ada
-        // Cari client dengan MAC atau PPPoE username yang cocok
-        const existingByMac = await db.select()
+      // === ATURAN FILTER KETAT: Exclude HP/Laptop Hotspot User biasa ===
+      // Hanya terima lease dari server DHCP khusus TR-069 / management
+      // Exclude pool hotspot (seperti dhcp2, hotspot, hs-vlan, dll.)
+      const isMgmtPool = serverName.includes('tr069') || serverName.includes('tr-069') || 
+                         serverName.includes('mgmt') || serverName.includes('management') || 
+                         serverName.includes('olt') || serverName.includes('pon') || 
+                         ip.startsWith('192.168.30.') // Subnet management dari screenshot
+
+      const isClientHotspotPool = serverName.includes('hotspot') || serverName.includes('hs-') || 
+                                  serverName.includes('dhcp2') || ip.startsWith('172.16.') // Pool HP hotspot user
+
+      if (isClientHotspotPool && !isMgmtPool) {
+        // Exclude HP client dari antrian modem
+        skipped++
+        continue
+      }
+
+      if (!isMgmtPool) {
+        // Jika bukan di pool management, skip demi keamanan data
+        skipped++
+        continue
+      }
+
+      // === Langkah 3: Cross-Reference MAC DHCP vs PPPoE Active ===
+      // Cari apakah MAC DHCP ini cocok (atau mirip 5-byte pertama) dengan PPPoE active
+      const matchedPppoe = pppoeClients.find(p => isSameDeviceMac(p.mac, mac))
+
+      if (matchedPppoe) {
+        // MAC ini milik PPPoE user yang aktif. Ini modem yang sama!
+        // Cari entri client di database berdasarkan PPPoE username atau MAC
+        const existing = await db.select()
           .from(clients)
-          .where(eq(clients.macAddress, mac))
+          .where(eq(clients.pppoeUsername, matchedPppoe.username))
           .limit(1)
 
-        if (existingByMac[0]) {
-          // Update lanIp untuk client PPPoE yang sudah ada
+        if (existing[0]) {
+          // Update lanIp (IP management lokal) untuk client PPPoE yang sudah ada
           await db.update(clients)
-            .set({ lanIp: ip, isOnline: true })
-            .where(eq(clients.id, existingByMac[0].id))
+            .set({ 
+              lanIp: ip, 
+              macAddress: existing[0].macAddress || mac, // Lengkapi MAC jika kosong
+              isOnline: true 
+            })
+            .where(eq(clients.id, existing[0].id))
           updated++
-          console.log(`[DHCP Sync] PPPoE client updated lanIp: ${existingByMac[0].name} → ${ip}`)
+          console.log(`[DHCP Sync] Satukan modem PPPoE & DHCP: ${existing[0].name} (PPPoE: ${matchedPppoe.username}) -> set lanIp: ${ip}`)
         } else {
-          // Client PPPoE belum ada entri MAC tapi sudah ada sebagai PPPoE
           skipped++
         }
         continue
       }
 
-      // === MAC tidak ada di PPPoE → ini modem HOTSPOT (non-PPPoE) ===
+      // === MAC tidak ada di PPPoE active → ini modem HOTSPOT / Non-PPPoE ===
       const clientName = hostName
         ? hostName.replace(/[^a-zA-Z0-9\-_. ]/g, '').trim()
-        : `HOTSPOT-${mac.toUpperCase().replace(/:/g, '').slice(-6)}`
+        : `MODEM-${mac.toUpperCase().replace(/:/g, '').slice(-6)}`
 
-      // Cek apakah sudah ada berdasarkan MAC address
-      const existingByMac = await db.select()
-        .from(clients)
-        .where(eq(clients.macAddress, mac))
-        .limit(1)
+      // Cek apakah sudah ada berdasarkan MAC address (atau MAC toleran)
+      const existingClients = await db.select().from(clients)
+      const existingByMac = existingClients.find(c => isSameDeviceMac(c.macAddress || '', mac))
 
-      if (existingByMac[0]) {
-        // Update data yang sudah ada
+      if (existingByMac) {
+        // Update data modem hotspot yang sudah ada
         await db.update(clients)
           .set({
             lanIp: ip,
             clientType: 'HOTSPOT',
             isOnline: true
           })
-          .where(eq(clients.id, existingByMac[0].id))
+          .where(eq(clients.id, existingByMac.id))
         updated++
-        console.log(`[DHCP Sync] HOTSPOT updated: ${existingByMac[0].name} → ${ip}`)
+        console.log(`[DHCP Sync] HOTSPOT updated: ${existingByMac.name} → ${ip}`)
       } else {
         // Insert client HOTSPOT baru ke antrian
         await db.insert(clients).values({

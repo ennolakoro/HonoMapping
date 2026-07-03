@@ -4,8 +4,8 @@ import { api } from '../api'
 
 const emit = defineEmits(['login-success'])
 
-const email = ref('admin@wiremap.local')
-const password = ref('admin123')
+const email = ref('')
+const password = ref('')
 const errorMsg = ref('')
 const isLoading = ref(false)
 

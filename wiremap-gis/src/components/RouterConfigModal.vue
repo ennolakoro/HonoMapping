@@ -11,8 +11,7 @@ const emit = defineEmits(['close', 'saved'])
 const settings = ref({
   MIKROTIK_IP: '',
   MIKROTIK_USER: '',
-  MIKROTIK_PASS: '',
-  MIKROTIK_BRIDGE_URL: ''
+  MIKROTIK_PASS: ''
 })
 
 const isLoading = ref(false)
@@ -29,8 +28,7 @@ const fetchSettings = async () => {
     settings.value = {
       MIKROTIK_IP: data.MIKROTIK_IP || '',
       MIKROTIK_USER: data.MIKROTIK_USER || '',
-      MIKROTIK_PASS: data.MIKROTIK_PASS || '',
-      MIKROTIK_BRIDGE_URL: data.MIKROTIK_BRIDGE_URL || ''
+      MIKROTIK_PASS: data.MIKROTIK_PASS || ''
     }
   } catch (err) {
     errorMessage.value = 'Gagal memuat konfigurasi: ' + err.message
@@ -65,8 +63,8 @@ const saveSettings = async () => {
 </script>
 
 <template>
-  <div v-if="isOpen" class="fixed inset-0 z-[110] flex items-center justify-center bg-black bg-opacity-60 backdrop-blur-sm p-4">
-    <div class="bg-surface-container-lowest p-6 rounded-2xl shadow-xl w-full max-w-md border border-outline-variant">
+  <div v-if="isOpen" class="fixed inset-0 z-[110] flex items-center justify-center bg-black bg-opacity-40 backdrop-blur-sm p-4">
+    <div class="bg-surface-container-lowest p-6 rounded-lg shadow-xl w-full max-w-md border border-outline-variant">
       <!-- Header -->
       <div class="flex justify-between items-center mb-6">
         <h3 class="text-xl font-bold text-on-surface flex items-center gap-2">
@@ -85,8 +83,9 @@ const saveSettings = async () => {
 
       <form v-else @submit.prevent="saveSettings" class="flex flex-col gap-4">
         <!-- Banner Deskripsi -->
-        <div class="bg-primary bg-opacity-5 p-3 rounded-lg border border-primary border-opacity-20 text-xs text-on-surface-variant leading-relaxed">
-          ℹ️ Konfigurasikan kredensial Mikrotik lokal / CHR Anda agar sistem GIS dapat menarik data PPPoE aktif dan memicu modem (TR-069) secara real-time.
+        <div class="bg-primary bg-opacity-5 p-3 rounded border border-primary border-opacity-20 text-xs text-on-surface-variant leading-relaxed flex gap-2">
+          <span class="material-symbols-outlined text-primary text-[18px] flex-shrink-0">info</span>
+          <span>Konfigurasikan kredensial Mikrotik lokal / CHR agar sistem GIS dapat menarik data PPPoE aktif dan memicu modem (TR-069) secara real-time.</span>
         </div>
 
         <!-- MIKROTIK IP -->
@@ -107,19 +106,14 @@ const saveSettings = async () => {
           <input v-model="settings.MIKROTIK_PASS" type="password" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none" placeholder="••••••••" required />
         </div>
 
-        <!-- MIKROTIK BRIDGE URL -->
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase">Bridge URL (Mikrotik V6 Proxy)</label>
-          <input v-model="settings.MIKROTIK_BRIDGE_URL" type="url" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-sm text-on-surface focus:ring-1 focus:ring-primary outline-none" placeholder="Contoh: http://localhost:3005" />
-          <span class="text-[10px] text-on-surface-variant">*Kosongkan jika menggunakan RouterOS V7 (Native API)</span>
-        </div>
-
         <!-- Eror/Sukses Feedback -->
-        <div v-if="errorMessage" class="bg-error bg-opacity-10 text-error p-3 rounded-lg border border-error border-opacity-35 text-xs">
-          ⚠️ {{ errorMessage }}
+        <div v-if="errorMessage" class="bg-error bg-opacity-10 text-error p-3 rounded border border-error border-opacity-35 text-xs flex gap-2">
+          <span class="material-symbols-outlined text-[16px]">warning</span>
+          <span>{{ errorMessage }}</span>
         </div>
-        <div v-if="successMessage" class="bg-green-500 bg-opacity-10 text-green-500 p-3 rounded-lg border border-green-500 border-opacity-35 text-xs">
-          ✅ {{ successMessage }}
+        <div v-if="successMessage" class="bg-green-500 bg-opacity-10 text-green-500 p-3 rounded border border-green-500 border-opacity-35 text-xs flex gap-2">
+          <span class="material-symbols-outlined text-[16px]">check_circle</span>
+          <span>{{ successMessage }}</span>
         </div>
 
         <!-- Actions -->

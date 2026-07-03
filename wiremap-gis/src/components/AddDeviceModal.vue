@@ -1,116 +1,377 @@
 <script setup>
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
+import { api } from '../api'
 import { store } from '../store'
 
 const emit = defineEmits(['save'])
 
 const form = ref({
-  type: 'ODC',
+  type: 'OLT',
   induk: '',
   nama: '',
   keterangan: '',
   jumlahPort: ''
 })
 
-// Ketika modal dibuka, otomatis isi Lat Lng dan Induk (jika mode Add Cable)
+const devices = ref([])
+const isLoadingDevices = ref(false)
+const loadError = ref('')
+
+const resetForm = () => {
+  form.value = {
+    type: store.selectedParentId ? 'ODC' : 'OLT',
+    induk: store.selectedParentId || '',
+    nama: '',
+    keterangan: '',
+    jumlahPort: ''
+  }
+}
+
+const loadDevices = async () => {
+  try {
+    isLoadingDevices.value = true
+    loadError.value = ''
+    devices.value = await api.getDevices()
+  } catch (err) {
+    loadError.value = 'Gagal memuat uplink: ' + err.message
+  } finally {
+    isLoadingDevices.value = false
+  }
+}
+
 watch(() => store.isAddModalOpen, (isOpen) => {
   if (isOpen) {
-    form.value.induk = store.selectedParentId || ''
-    
-    // Default ODC/ODP jika tambah kabel, default OLT jika tidak ada induk
-    if (store.selectedParentId) {
-      form.value.type = 'ODC'
-    } else {
-      form.value.type = 'OLT'
-    }
+    resetForm()
+    loadDevices()
   }
 })
 
-const submitForm = () => {
-  emit('save', { 
-    ...form.value, 
+watch(() => form.value.type, (type) => {
+  if (type === 'OLT') {
+    form.value.induk = ''
+    form.value.jumlahPort = ''
+    return
+  }
+  if (store.selectedParentId) {
+    form.value.induk = store.selectedParentId
+    return
+  }
+  if (!uplinkOptions.value.some(device => String(device.id) === String(form.value.induk))) {
+    form.value.induk = uplinkOptions.value[0]?.id || ''
+  }
+})
+
+const uplinkOptions = computed(() => {
+  const plottedDevices = devices.value.filter(device => device.type !== 'CLIENT' && device.lat && device.lng)
+  if (form.value.type === 'ODC') {
+    return plottedDevices.filter(device => ['OLT', 'ODP'].includes(device.type))
+  }
+  if (form.value.type === 'ODP') {
+    return plottedDevices.filter(device => ['OLT', 'ODC', 'ODP'].includes(device.type))
+  }
+  if (form.value.type === 'CLIENT') {
+    return plottedDevices.filter(device => device.type === 'ODP')
+  }
+  return []
+})
+
+const submitForm = (syncAfterSave = false) => {
+  emit('save', {
+    ...form.value,
+    syncAfterSave,
     lat: store.pendingCoords?.lat,
     lng: store.pendingCoords?.lng
   })
   store.cancelAdd()
-  // Reset form
-  form.value = { type: 'ODC', induk: '', nama: '', keterangan: '', jumlahPort: '' }
+  resetForm()
 }
 </script>
 
 <template>
-  <div v-if="store.isAddModalOpen" class="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm">
-    <div class="bg-surface-container-lowest border border-outline-variant w-full max-w-md rounded-xl shadow-lg overflow-hidden flex flex-col">
-      <!-- Header -->
-      <div class="px-6 py-4 border-b border-outline-variant flex justify-between items-center bg-surface-container-low">
-        <h3 class="text-xl font-bold text-on-surface">Tambah Perangkat</h3>
-        <button @click="store.cancelAdd()" class="text-on-surface-variant hover:text-error p-1 rounded-md transition-colors">
+  <div v-if="store.isAddModalOpen" class="add-device-overlay">
+    <article class="add-device-panel">
+      <header class="add-device-header">
+        <div class="header-main">
+          <div class="header-icon">
+            <span class="material-symbols-outlined">add_location_alt</span>
+          </div>
+          <div>
+            <h2>Tambah Perangkat</h2>
+            <p>Lokasi mengikuti titik yang dipilih di peta.</p>
+          </div>
+        </div>
+        <button @click="store.cancelAdd()" class="icon-close" aria-label="Tutup modal">
           <span class="material-symbols-outlined">close</span>
         </button>
-      </div>
-      
-      <!-- Form Body -->
-      <form @submit.prevent="submitForm" class="p-6 flex flex-col gap-4">
-        <!-- Type -->
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase">Type</label>
-          <select v-model="form.type" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary outline-none">
-            <option value="OLT">OLT (Induk Utama)</option>
-            <option value="ODC">ODC (Optical Distribution Cabinet)</option>
-            <option value="ODP">ODP (Optical Distribution Point)</option>
+      </header>
+
+      <form class="add-device-body" @submit.prevent="submitForm(false)">
+        <label class="form-field">
+          <span>Type</span>
+          <select v-model="form.type">
+            <option value="OLT">OLT</option>
+            <option value="ODC">ODC</option>
+            <option value="ODP">ODP</option>
             <option value="CLIENT">CLIENT</option>
           </select>
+        </label>
+
+        <label v-if="form.type !== 'OLT'" class="form-field">
+          <span>Uplink / Induk</span>
+          <select v-model="form.induk" :required="form.type !== 'OLT'" :disabled="!!store.selectedParentId || isLoadingDevices">
+            <option value="">Pilih uplink</option>
+            <option v-for="device in uplinkOptions" :key="device.id" :value="device.id">
+              {{ device.name }} ({{ device.type }})
+            </option>
+          </select>
+        </label>
+
+        <label class="form-field">
+          <span>Nama</span>
+          <input v-model="form.nama" required placeholder="Contoh: ODP-01-A" />
+        </label>
+
+        <label v-if="['ODC', 'ODP'].includes(form.type)" class="form-field">
+          <span>Port</span>
+          <input v-model="form.jumlahPort" required type="number" min="1" placeholder="Contoh: 8" />
+        </label>
+
+        <label class="form-field">
+          <span>Keterangan</span>
+          <textarea v-model="form.keterangan" rows="3" placeholder="Catatan teknis atau lokasi tiang"></textarea>
+        </label>
+
+        <div class="location-note">
+          <span class="material-symbols-outlined">my_location</span>
+          <strong v-if="store.pendingCoords">
+            {{ store.pendingCoords.lat.toFixed(6) }}, {{ store.pendingCoords.lng.toFixed(6) }}
+          </strong>
+          <strong v-else>Lokasi belum tersedia</strong>
         </div>
 
-        <!-- Nama -->
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase">Nama</label>
-          <input v-model="form.nama" type="text" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary outline-none" placeholder="Contoh: ODP-SU-05" required />
+        <div v-if="loadError" class="form-alert">{{ loadError }}</div>
+        <div v-if="form.type !== 'OLT' && !uplinkOptions.length && !isLoadingDevices" class="form-alert">
+          Belum ada uplink yang bisa dipilih untuk type ini.
         </div>
 
-        <!-- Induk (Semua Butuh Induk Sesuai Permintaan) -->
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase">
-            {{ form.type === 'OLT' ? 'Induk (Opsional)' : 'Induk / Uplink (ODP/ODC)' }}
-          </label>
-          <input v-model="form.induk" type="text" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary outline-none" placeholder="ID Perangkat Induk..." :required="form.type !== 'OLT'" :disabled="!!store.selectedParentId" />
-          <span v-if="store.selectedParentId" class="text-[10px] text-green-500">*Terisi otomatis dari Tambah Kabel</span>
-        </div>
-
-        <!-- Dynamic Fields untuk ODC/ODP -->
-        <div v-if="['ODC', 'ODP'].includes(form.type)" class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase">Jumlah Port (Kapasitas)</label>
-          <input v-model="form.jumlahPort" type="number" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary outline-none" placeholder="Contoh: 8" required />
-        </div>
-
-        <!-- Dynamic Fields untuk CLIENT -->
-        <div v-if="form.type === 'CLIENT'" class="grid grid-cols-2 gap-4">
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase text-blue-500">PPPoE Username</label>
-            <input v-model="form.pppoeUsername" type="text" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-blue-500 outline-none" placeholder="user@mikrotik" />
-          </div>
-          <div class="flex flex-col gap-1.5">
-            <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase text-green-500">SN Modem (CWMP)</label>
-            <input v-model="form.snModem" type="text" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-green-500 outline-none" placeholder="ZTEGC... (Opsional)" />
-          </div>
-        </div>
-
-        <!-- Keterangan -->
-        <div class="flex flex-col gap-1.5">
-          <label class="text-xs font-semibold tracking-wider text-on-surface-variant uppercase">Keterangan</label>
-          <textarea v-model="form.keterangan" rows="2" class="w-full bg-surface-container-low border border-outline-variant rounded-lg px-3 py-2 text-on-surface focus:ring-1 focus:ring-primary outline-none resize-none" placeholder="Catatan tambahan..."></textarea>
-        </div>
-
-        <div class="bg-surface-container p-2 rounded-lg text-xs text-on-surface-variant text-center border border-outline-variant">
-          📍 Lokasi: {{ store.pendingCoords?.lat.toFixed(5) }}, {{ store.pendingCoords?.lng.toFixed(5) }}
-        </div>
-
-        <!-- Actions -->
-        <div class="flex gap-3 mt-4">
-          <button @click="store.cancelAdd()" type="button" class="flex-1 py-2.5 border border-outline-variant text-on-surface font-medium rounded-lg hover:bg-surface-container transition-colors">Batal</button>
-          <button type="submit" class="flex-1 py-2.5 bg-primary text-white font-medium rounded-lg hover:opacity-90 shadow-sm">Simpan</button>
+        <div class="modal-actions">
+          <button type="button" @click="store.cancelAdd()" class="secondary">Batal</button>
+          <button
+            v-if="form.type === 'OLT'"
+            type="button"
+            class="primary"
+            :disabled="!form.nama || !store.pendingCoords"
+            @click="submitForm(true)"
+          >
+            <span class="material-symbols-outlined">sync</span>
+            Simpan OLT & Sync
+          </button>
+          <button
+            v-else
+            type="submit"
+            class="primary"
+            :disabled="!store.pendingCoords || (form.type !== 'OLT' && !form.induk)"
+          >
+            Simpan Perangkat
+          </button>
         </div>
       </form>
-    </div>
+    </article>
   </div>
 </template>
+
+<style scoped>
+.add-device-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 110;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 14px;
+  background: rgba(2, 6, 23, 0.58);
+  backdrop-filter: blur(6px);
+}
+
+.add-device-panel {
+  width: clamp(340px, 92vw, 430px);
+  overflow: hidden;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 14px;
+  background: #07111f;
+  color: #e5edf8;
+  box-shadow: 0 22px 70px rgba(2, 6, 23, 0.58);
+}
+
+.add-device-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  background: linear-gradient(135deg, #0b1730 0%, #10233f 100%);
+}
+
+.header-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.header-icon {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  border-radius: 10px;
+  background: rgba(59, 130, 246, 0.18);
+  color: #93c5fd;
+}
+
+.header-icon .material-symbols-outlined,
+.icon-close .material-symbols-outlined {
+  font-size: 20px;
+}
+
+.add-device-header h2 {
+  margin: 0;
+  color: #f8fafc;
+  font-size: 16px;
+  font-weight: 900;
+}
+
+.add-device-header p {
+  margin: 3px 0 0;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.icon-close {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 9px;
+  background: rgba(15, 23, 42, 0.7);
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.add-device-body {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  background:
+    radial-gradient(circle at top right, rgba(59, 130, 246, 0.12), transparent 34%),
+    #07111f;
+}
+
+.form-field {
+  display: grid;
+  gap: 6px;
+}
+
+.form-field span {
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.form-field input,
+.form-field select,
+.form-field textarea {
+  width: 100%;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: #06101d;
+  color: #f8fafc;
+  padding: 10px 11px;
+  font-size: 13px;
+  font-weight: 700;
+  outline: none;
+}
+
+.form-field textarea {
+  resize: vertical;
+  min-height: 82px;
+}
+
+.form-field input:focus,
+.form-field select:focus,
+.form-field textarea:focus {
+  border-color: #60a5fa;
+  box-shadow: 0 0 0 3px rgba(96, 165, 250, 0.15);
+}
+
+.location-note,
+.form-alert {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-radius: 10px;
+  background: #0d1a2c;
+  color: #cbd5e1;
+  padding: 10px;
+  font-size: 12px;
+}
+
+.location-note .material-symbols-outlined {
+  color: #93c5fd;
+  font-size: 18px;
+}
+
+.form-alert {
+  background: rgba(120, 53, 15, 0.3);
+  color: #fde68a;
+  font-weight: 800;
+}
+
+.modal-actions {
+  display: grid;
+  grid-template-columns: 1fr 1.5fr;
+  gap: 8px;
+  margin-top: 2px;
+}
+
+.modal-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 40px;
+  border-radius: 10px;
+  font-size: 12px;
+  font-weight: 900;
+  cursor: pointer;
+}
+
+.modal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.modal-actions .secondary {
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  background: #0d1a2c;
+  color: #e2e8f0;
+}
+
+.modal-actions .primary {
+  border: 1px solid rgba(96, 165, 250, 0.35);
+  background: #2563eb;
+  color: #fff;
+}
+
+.modal-actions .material-symbols-outlined {
+  font-size: 17px;
+}
+</style>
