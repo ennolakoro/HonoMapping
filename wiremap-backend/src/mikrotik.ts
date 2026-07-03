@@ -51,6 +51,40 @@ export async function getPppoeActive(mikrotikIp: string, user: string, pass: str
 }
 
 /**
+ * Mengambil daftar PPPoE Secret dari Mikrotik Bridge.
+ * Dipakai untuk menampilkan username/password PPPoE di detail pelanggan.
+ */
+export async function getPppoeSecrets(mikrotikIp: string, user: string, pass: string, bridgeUrl?: string): Promise<any[]> {
+  const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/ppp-secrets`;
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 12000);
+
+  try {
+    const response = await fetch(url, {
+      method: 'GET',
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      throw new Error(`Bridge PPP secret error: ${response.status} ${response.statusText}${raw ? `: ${raw}` : ''}`);
+    }
+
+    return await response.json();
+  } catch (error: any) {
+    clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error('Timeout membaca PPP secret dari bridge. Pastikan endpoint /ppp-secrets tersedia dan bridge bisa akses Mikrotik.');
+    }
+    console.error("Gagal menarik PPP secret:", error);
+    throw error;
+  }
+}
+
+/**
  * Mengambil semua DHCP Lease aktif dari Mikrotik via Bridge.
  * Bridge menggunakan RouterOS API v6 (port 8728) dengan node-routeros.
  * Field kunci: 'mac-address', 'address', 'server', 'status'
@@ -98,7 +132,7 @@ export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: s
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/trigger-modem`;
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000);
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
 
   try {
     const response = await fetch(url, {
@@ -118,6 +152,9 @@ export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: s
     return true;
   } catch (error: any) {
     clearTimeout(timeoutId);
+    if (error.name === 'AbortError') {
+      throw new Error(`Timeout 30 detik saat memanggil bridge /trigger-modem untuk ${modemIp}. Bridge atau koneksi Mikrotik lambat/tidak merespons.`);
+    }
     console.error("Gagal eksekusi tool fetch di Bridge:", error);
     throw error;
   }

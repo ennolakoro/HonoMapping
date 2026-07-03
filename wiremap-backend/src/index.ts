@@ -95,7 +95,7 @@ app.post('/api/auth/login', async (c) => {
   return c.json({ error: 'Invalid credentials' }, 401)
 })
 
-import { getPppoeActive, triggerModemCWMP, getDhcpLeases } from './mikrotik'
+import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
 import { createInformResponse, createGetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
@@ -777,6 +777,49 @@ app.get('/api/protected/mikrotik/pppoe-status', async (c) => {
     return c.json(activeClients)
   } catch (err: any) {
     return c.json({ error: 'Gagal menghubungi Mikrotik', details: err.message }, 502)
+  }
+})
+
+app.get('/api/protected/mikrotik/pppoe-credential/:username', async (c) => {
+  try {
+    const username = decodeURIComponent(c.req.param('username'))
+    const db = getDb(c.env)
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
+
+    if (!username) {
+      return c.json({ error: 'Username PPPoE kosong' }, 400)
+    }
+    if (!MIKROTIK_IP || !MIKROTIK_USER || !MIKROTIK_PASS) {
+      return c.json({ error: 'Kredensial Mikrotik belum dikonfigurasi di server' }, 500)
+    }
+
+    const [activeResult, secretResult] = await Promise.allSettled([
+      getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL),
+      getPppoeSecrets(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+    ])
+
+    const activeList = activeResult.status === 'fulfilled' ? activeResult.value : []
+    const secretList = secretResult.status === 'fulfilled' ? secretResult.value : []
+    const active = activeList.find((item: any) =>
+      String(item.name || item.user || item.username || '').toLowerCase() === username.toLowerCase()
+    )
+    const secret = secretList.find((item: any) =>
+      String(item.name || '').toLowerCase() === username.toLowerCase()
+    )
+
+    return c.json({
+      username,
+      password: secret?.password || null,
+      profile: secret?.profile || null,
+      service: secret?.service || active?.service || null,
+      isActive: !!active,
+      address: active?.address || active?.['remote-address'] || active?.remoteAddress || null,
+      uptime: active?.uptime || null,
+      secretError: secretResult.status === 'rejected' ? secretResult.reason?.message : null,
+      activeError: activeResult.status === 'rejected' ? activeResult.reason?.message : null
+    })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal mengambil credential PPPoE', details: err.message }, 502)
   }
 })
 

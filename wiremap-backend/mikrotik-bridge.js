@@ -17,6 +17,14 @@ function getMikrotikHostInfo() {
     };
 }
 
+function withTimeout(promise, ms, message) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(message)), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+}
+
 app.get('/active', async (req, res) => {
     const { host, port } = getMikrotikHostInfo();
     const user = process.env.MIKROTIK_USER;
@@ -62,6 +70,40 @@ app.get('/active', async (req, res) => {
     }
 });
 
+app.get('/ppp-secrets', async (req, res) => {
+    const { host, port } = getMikrotikHostInfo();
+    const user = process.env.MIKROTIK_USER;
+    const password = process.env.MIKROTIK_PASS;
+
+    if (!host || !user || !password) {
+        return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
+    }
+
+    const api = new RouterOSClient({ host, user, password, port });
+    api.on('error', (err) => console.log('RouterOS Error:', err.message));
+
+    try {
+        console.log(`Mengambil PPP secret dari Mikrotik ${host}:${port}...`);
+        const client = await api.connect();
+        const secrets = await client.menu('/ppp/secret').get();
+        api.close();
+
+        const formatted = secrets.map(item => ({
+            name: item.name || '',
+            password: item.password || '',
+            service: item.service || '',
+            profile: item.profile || '',
+            disabled: item.disabled || 'false',
+            comment: item.comment || ''
+        }));
+
+        res.json(formatted);
+    } catch (err) {
+        console.error('Gagal mengambil PPP secret:', err);
+        res.status(502).json({ error: 'Gagal mengambil PPP secret', details: err.message });
+    }
+});
+
 // Endpoint untuk trigger modem CWMP (Mini ACS)
 app.post('/trigger-modem', async (req, res) => {
     const { ip } = req.body;
@@ -76,7 +118,11 @@ app.post('/trigger-modem', async (req, res) => {
 
     try {
         console.log(`Men-trigger modem ${ip} via Mikrotik API...`);
-        const client = await api.connect();
+        const client = await withTimeout(
+            api.connect(),
+            20000,
+            `Timeout koneksi Mikrotik ${host}:${port} saat trigger modem ${ip}`
+        );
         
         // Eksekusi /tool/fetch untuk mencolek modem beserta Autentikasi
         const modemUrl = `http://${ip}:7547/`;
