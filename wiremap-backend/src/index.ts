@@ -225,6 +225,8 @@ interface CwmpSession {
   currentCwmpNamespace: string;
   currentParamsToRequest: string[];
   currentTriggeredClientId: number | null;
+  currentProgressKeys: string[];
+  currentClientIp: string | null;
   gponFaultRetried: boolean;
   updatedAt: number;
 }
@@ -242,6 +244,33 @@ interface SyncProgress {
 
 const syncProgress = new Map<string, SyncProgress>();
 
+const normalizeProgressKeys = (keys: Array<string | null | undefined>) =>
+  [...new Set(keys.filter((key): key is string => Boolean(key)))]
+
+const getProgressKeysForClient = (clientId: number | null, keys: Array<string | null | undefined>) => {
+  const allKeys = new Set(normalizeProgressKeys(keys))
+  if (clientId) {
+    for (const [key, progress] of syncProgress.entries()) {
+      if (progress.id === clientId) allKeys.add(key)
+    }
+  }
+  return [...allKeys]
+}
+
+const getFirstProgress = (keys: string[]) => {
+  for (const key of keys) {
+    const progress = syncProgress.get(key)
+    if (progress) return progress
+  }
+  return null
+}
+
+const setProgressForKeys = (keys: string[], progress: SyncProgress) => {
+  for (const key of keys) {
+    syncProgress.set(key, { ...progress })
+  }
+}
+
 // Membersihkan sesi & progress kedaluwarsa secara berkala
 const cleanExpiredSessions = () => {
   const now = Date.now()
@@ -254,6 +283,7 @@ const cleanExpiredSessions = () => {
     const timeout = (progress.status === 'success' || progress.status === 'failed') ? 60000 : 30000
     if (now - progress.updatedAt > timeout) {
       if (progress.status === 'triggered' || progress.status === 'connected' || progress.status === 'fetching') {
+        console.warn(`[SYNC] Timeout menunggu Inform untuk ${ip} (${progress.username}) status=${progress.status}`)
         syncProgress.set(ip, {
           ...progress,
           progress: 100,
@@ -291,7 +321,7 @@ const cwmpHandler = async (c: any) => {
     
     if (informData.SerialNumber) {
       // Cari apakah client dengan serial number ini sudah terdaftar
-      const existing = await db.select()
+      let existing = await db.select()
         .from(clients)
         .where(eq(clients.snModem, informData.SerialNumber))
         .limit(1)
@@ -299,13 +329,37 @@ const cwmpHandler = async (c: any) => {
       let clientId: number | null = null
       let clientName = `ONT-${informData.SerialNumber}`
 
+      const connectionRequestIp = (() => {
+        const url = informData.connectionRequestUrl
+        if (!url) return null
+        try {
+          const host = new URL(url).hostname
+          return host && !isPublicIp(host) ? host : null
+        } catch {
+          const match = url.match(/https?:\/\/([^/:]+)/i)
+          const host = match?.[1]
+          return host && !isPublicIp(host) ? host : null
+        }
+      })()
+
       // Tentukan IP modem yang valid. Jangan gunakan IP Publik jika ada alternatif IP lokal
       const currentClientIp = informData.ipAddress && !isPublicIp(informData.ipAddress)
         ? informData.ipAddress
-        : (isPublicIp(clientIp) ? null : clientIp)
+        : connectionRequestIp || (isPublicIp(clientIp) ? null : clientIp)
+
+      if (!existing[0] && currentClientIp) {
+        existing = await db.select()
+          .from(clients)
+          .where(eq(clients.lanIp, currentClientIp))
+          .limit(1)
+        if (existing[0]) {
+          console.log(`[MiniACS] SN ${informData.SerialNumber} dicocokkan ke client ${existing[0].name} berdasarkan lanIp ${currentClientIp}`)
+        }
+      }
 
       const updatePayload: Record<string, any> = {
         isOnline: true,
+        snModem: informData.SerialNumber,
         brand: informData.manufacturer || undefined,
         modelName: informData.modelName || undefined,
         hardwareVersion: informData.hardwareVersion || undefined,
@@ -430,6 +484,8 @@ const cwmpHandler = async (c: any) => {
         ]
       }
  
+      const progressKeys = getProgressKeysForClient(clientId, [clientIp, currentClientIp])
+
       session = {
         waitingForEmptyPost: true,
         currentModemSN: informData.SerialNumber,
@@ -437,20 +493,23 @@ const cwmpHandler = async (c: any) => {
         currentCwmpNamespace: informData.cwmpNamespace || 'urn:dslforum-org:cwmp-1-0',
         currentParamsToRequest: paramsToReq,
         currentTriggeredClientId: clientId,
+        currentProgressKeys: progressKeys,
+        currentClientIp,
         gponFaultRetried: false,
         updatedAt: Date.now()
       }
       cwmpSessions.set(clientIp, session)
 
       // Set progress tracker status
-      const existingProgress = syncProgress.get(clientIp)
-      syncProgress.set(clientIp, {
+      const existingProgress = getFirstProgress(progressKeys)
+      setProgressForKeys(progressKeys, {
         id: clientId,
         username: existingProgress?.username || clientName,
         progress: 40,
         status: 'connected',
         updatedAt: Date.now()
       })
+      console.log(`[SYNC] Inform diterima untuk ${clientName} SN=${informData.SerialNumber} requestIp=${clientIp} localIp=${currentClientIp || 'N/A'} progressKeys=${progressKeys.join(',')}`)
     }
 
     const responseXml = createInformResponse(session ? session.currentCwmpId : '', session ? session.currentCwmpNamespace : undefined)
@@ -473,9 +532,10 @@ const cwmpHandler = async (c: any) => {
       cwmpSessions.set(clientIp, session)
 
       // Update progress tracker
-      const prog = syncProgress.get(clientIp)
+      const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+      const prog = getFirstProgress(progressKeys)
       if (prog) {
-        syncProgress.set(clientIp, {
+        setProgressForKeys(progressKeys, {
           ...prog,
           progress: 70,
           status: 'fetching',
@@ -515,7 +575,7 @@ const cwmpHandler = async (c: any) => {
             softwareVersion: params.softwareVersion ?? null,
             macAddress: params.macAddress ?? null,
             wanIp: params.wanIp && !isPublicIp(params.wanIp) ? params.wanIp : null,
-            lanIp: isPublicIp(clientIp) ? undefined : clientIp,
+            lanIp: session.currentClientIp || (isPublicIp(clientIp) ? undefined : clientIp),
             rxPower: params.rxPower ?? null,
             txPower: params.txPower ?? null,
             temperature: params.temperature ?? null,
@@ -539,9 +599,10 @@ const cwmpHandler = async (c: any) => {
 
           if (updatedRows.length === 0) {
             console.warn(`[DB] Tidak ada client yang cocok untuk SN ${session.currentModemSN}`)
-            const prog = syncProgress.get(clientIp)
+            const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+            const prog = getFirstProgress(progressKeys)
             if (prog) {
-              syncProgress.set(clientIp, {
+              setProgressForKeys(progressKeys, {
                 ...prog,
                 progress: 100,
                 status: 'failed',
@@ -551,9 +612,10 @@ const cwmpHandler = async (c: any) => {
             }
           } else {
             console.log(`[DB] Data modem ${session.currentModemSN} berhasil diupdate untuk client id: ${updatedRows.map(r=>r.id).join(',')}`)
-            const prog = syncProgress.get(clientIp)
+            const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+            const prog = getFirstProgress(progressKeys)
             if (prog) {
-              syncProgress.set(clientIp, {
+              setProgressForKeys(progressKeys, {
                 ...prog,
                 progress: 100,
                 status: 'success',
@@ -563,9 +625,10 @@ const cwmpHandler = async (c: any) => {
           }
         } catch (e: any) {
           console.error("Gagal update parameter ke DB:", e)
-          const prog = syncProgress.get(clientIp)
+          const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+          const prog = getFirstProgress(progressKeys)
           if (prog) {
-            syncProgress.set(clientIp, {
+            setProgressForKeys(progressKeys, {
               ...prog,
               progress: 100,
               status: 'failed',
@@ -606,9 +669,10 @@ const cwmpHandler = async (c: any) => {
       }
       
       console.log(`[CWMP] Sesi ${clientIp} diakhiri karena Fault.`)
-      const prog = syncProgress.get(clientIp)
+      const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+      const prog = getFirstProgress(progressKeys)
       if (prog) {
-        syncProgress.set(clientIp, {
+        setProgressForKeys(progressKeys, {
           ...prog,
           progress: 100,
           status: 'failed',
@@ -673,6 +737,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
   const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
   
   cleanExpiredSessions()
+  console.log(`[SYNC] Request trigger Inform diterima untuk modemIp=${modemIp} bridge=${MIKROTIK_BRIDGE_URL || 'http://127.0.0.1:3005'}`)
 
   try {
     let body: any = {}
@@ -691,6 +756,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
         clientName = client[0].name
       }
     }
+    console.log(`[SYNC] Target client=${clientName} id=${clientId || 'N/A'} ip=${modemIp}`)
 
     // Set progress awal (10%)
     syncProgress.set(modemIp, {
@@ -704,6 +770,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
     // Menyuruh Mikrotik "mencolek" modem. Bridge lama bisa timeout 10 detik,
     // tetapi Inform dari ONT masih bisa masuk setelah request ini selesai.
     const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
+    console.log(`[SYNC] Trigger ${triggered ? 'terkirim' : 'ditunggu/queued'} untuk ${clientName} (${modemIp})`)
     return c.json({
       message: triggered
         ? `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal`
@@ -711,6 +778,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
       queued: !triggered
     })
   } catch (err: any) {
+    console.error(`[SYNC] Gagal trigger Inform untuk ${modemIp}:`, err)
     syncProgress.set(modemIp, {
       id: null,
       username: `ONT-${modemIp}`,
