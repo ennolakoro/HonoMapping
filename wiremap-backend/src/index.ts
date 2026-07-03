@@ -168,6 +168,9 @@ const cleanupOldGarbageData = async (db: any) => {
     await db.update(clients)
       .set({ wanIp: null })
       .where(eq(clients.wanIp, '36.75.220.32'))
+    await db.update(clients)
+      .set({ lanIp: null })
+      .where(eq(clients.lanIp, '36.75.220.32'))
 
     // 2. Cari semua record di DB
     const all = await db.select().from(clients)
@@ -182,31 +185,30 @@ const cleanupOldGarbageData = async (db: any) => {
           .set({ wanIp: null })
           .where(eq(clients.id, c.id))
       }
+      if (c.lanIp && isPublicIp(c.lanIp)) {
+        await db.update(clients)
+          .set({ lanIp: null })
+          .where(eq(clients.id, c.id))
+      }
 
       if (
         c.lat === null &&
         c.lng === null &&
-        c.clientType === 'HOTSPOT' &&
-        c.lanIp &&
-        all.some((other: any) =>
-          other.id !== c.id &&
-          other.lanIp === c.lanIp &&
-          (other.pppoeUsername || other.snModem || other.wifiSsid || other.rxPower)
-        )
+        (c.name.startsWith('ONT-') || c.name.startsWith('MODEM-') || c.clientType === 'HOTSPOT')
       ) {
-        toDeleteIds.push(c.id)
-        continue
-      }
-
-      if (c.lat === null && c.lng === null && (c.name.startsWith('ONT-') || c.name.startsWith('MODEM-'))) {
-        // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip atau data lebih lengkap)
+        // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip, atau lanIp/wanIp yang sama, atau data lebih lengkap)
         const betterDuplicate = all.find((other: any) =>
           other.id !== c.id && 
           (
-            (other.pppoeUsername && other.snModem === c.snModem) ||
-            (c.macAddress && other.macAddress && isSameDeviceMac(c.macAddress, other.macAddress))
-          )
+            (c.snModem && other.snModem === c.snModem) ||
+            (c.macAddress && other.macAddress && isSameDeviceMac(c.macAddress, other.macAddress)) ||
+            (c.lanIp && other.lanIp && c.lanIp === other.lanIp) ||
+            (c.wanIp && other.wanIp && c.wanIp === other.wanIp)
+          ) &&
+          // Prioritaskan yang ada pppoeUsername atau yang sudah di-plot (ada koordinat)
+          (other.pppoeUsername || (other.lat !== null && other.lng !== null) || (other.clientType === 'PPPOE' && c.clientType !== 'PPPOE'))
         )
+
         if (betterDuplicate) {
           const merged = stripUndefined({
             snModem: betterDuplicate.snModem || c.snModem || undefined,
@@ -221,8 +223,8 @@ const cleanupOldGarbageData = async (db: any) => {
             hardwareVersion: betterDuplicate.hardwareVersion || c.hardwareVersion || undefined,
             softwareVersion: betterDuplicate.softwareVersion || c.softwareVersion || undefined,
             macAddress: betterDuplicate.macAddress || c.macAddress || undefined,
-            wanIp: betterDuplicate.wanIp || c.wanIp || undefined,
-            lanIp: betterDuplicate.lanIp || c.lanIp || undefined,
+            wanIp: (betterDuplicate.wanIp && !isPublicIp(betterDuplicate.wanIp)) ? betterDuplicate.wanIp : (c.wanIp && !isPublicIp(c.wanIp) ? c.wanIp : undefined),
+            lanIp: (betterDuplicate.lanIp && !isPublicIp(betterDuplicate.lanIp)) ? betterDuplicate.lanIp : (c.lanIp && !isPublicIp(c.lanIp) ? c.lanIp : undefined),
             rxPower: betterDuplicate.rxPower || c.rxPower || undefined,
             txPower: betterDuplicate.txPower || c.txPower || undefined,
             temperature: betterDuplicate.temperature || c.temperature || undefined,
