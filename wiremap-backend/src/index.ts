@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { cors } from 'hono/cors'
 import { getDb } from './db'
 import { devices, session as sessionTable, user as userTable } from './db/schema'
-import { eq } from 'drizzle-orm'
+import { eq, and, ne, isNull } from 'drizzle-orm'
 
 // Environment bindings untuk Cloudflare Workers
 type Bindings = {
@@ -968,25 +968,64 @@ app.post('/api/protected/sync-real-mikrotik', async (c) => {
       const wanIp = pppoe.address || pppoe['remote-address'] || pppoe.remoteAddress || null
       const macAddress = pppoe['caller-id'] || pppoe.callerId || pppoe.macAddress || pppoe.mac || null
 
-      const existing = await db.select()
+      // Bersihkan IP Publik dari record lama (agar tidak mengganggu visualisasi di UI)
+      await db.update(clients)
+        .set({ wanIp: null })
+        .where(eq(clients.wanIp, '36.75.220.32'))
+
+      // Filter IP Publik: jangan simpan IP Publik NAT sebagai wanIp Mikrotik
+      const validWanIp = wanIp && !isPublicIp(wanIp) ? wanIp : null
+
+      // Cari client berdasarkan pppoeUsername
+      const existingByUsername = await db.select()
         .from(clients)
         .where(eq(clients.pppoeUsername, username))
         .limit(1)
 
-      if (existing[0]) {
+      // Cari client berdasarkan MAC Address toleransi 5-byte
+      const allClients = await db.select().from(clients)
+      const existingByMac = macAddress ? allClients.find(c => isSameDeviceMac(c.macAddress || '', macAddress)) : null
+
+      if (existingByUsername[0]) {
+        // Update client yang sudah ada via PPPoE username
         await db.update(clients)
           .set({
-            wanIp,
-            macAddress,
+            wanIp: validWanIp || existingByUsername[0].wanIp,
+            macAddress: existingByUsername[0].macAddress || macAddress,
             isOnline: true
           })
-          .where(eq(clients.id, existing[0].id))
+          .where(eq(clients.id, existingByUsername[0].id))
         updated++
+      } else if (existingByMac) {
+        // SATUKAN! Jika data Inform ACS sudah masuk dengan MAC yang sama,
+        // hubungkan dengan PPPoE username dari Mikrotik. Jangan buat data baru!
+        await db.update(clients)
+          .set({
+            pppoeUsername: username,
+            name: username, // Update nama menggunakan user PPPoE
+            wanIp: validWanIp || existingByMac.wanIp,
+            macAddress: existingByMac.macAddress || macAddress,
+            isOnline: true
+          })
+          .where(eq(clients.id, existingByMac.id))
+        
+        // Hapus duplikat potensial jika ada record lain dengan username yang sama tapi kosong
+        if (username) {
+          await db.delete(clients)
+            .where(and(
+              eq(clients.pppoeUsername, username),
+              ne(clients.id, existingByMac.id),
+              isNull(clients.snModem)
+            ))
+        }
+        updated++
+        console.log(`[PPPoE Sync] Satukan data ACS (SN: ${existingByMac.snModem}) dengan PPPoE ${username} berdasarkan MAC`)
       } else {
+        // Insert baru ke antrian jika benar-benar baru
         await db.insert(clients).values({
           name: username,
           pppoeUsername: username,
-          wanIp,
+          wanIp: validWanIp,
           macAddress,
           lat: null,
           lng: null,
