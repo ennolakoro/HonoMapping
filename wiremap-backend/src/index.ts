@@ -175,6 +175,21 @@ const cleanupOldGarbageData = async (db: any) => {
           .where(eq(clients.id, c.id))
       }
 
+      if (
+        c.lat === null &&
+        c.lng === null &&
+        c.clientType === 'HOTSPOT' &&
+        c.lanIp &&
+        all.some((other: any) =>
+          other.id !== c.id &&
+          other.lanIp === c.lanIp &&
+          (other.pppoeUsername || other.snModem || other.wifiSsid || other.rxPower)
+        )
+      ) {
+        toDeleteIds.push(c.id)
+        continue
+      }
+
       if (c.lat === null && c.lng === null && (c.name.startsWith('ONT-') || c.name.startsWith('MODEM-'))) {
         // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip atau data lebih lengkap)
         const hasBetterDuplicate = all.some((other: any) => 
@@ -945,14 +960,38 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
 
       // Cek apakah sudah ada berdasarkan MAC address (atau MAC toleran)
       const existingClients = await db.select().from(clients)
+      const existingByLanIp = existingClients.find(c => c.lanIp === ip)
       const existingByMac = existingClients.find(c => isSameDeviceMac(c.macAddress || '', mac))
 
-      if (existingByMac) {
+      if (existingByLanIp) {
+        await db.update(clients)
+          .set({
+            lanIp: ip,
+            macAddress: existingByLanIp.macAddress || mac,
+            clientType: existingByLanIp.pppoeUsername || existingByLanIp.snModem ? (existingByLanIp.clientType || 'PPPOE') : 'HOTSPOT',
+            isOnline: true
+          })
+          .where(eq(clients.id, existingByLanIp.id))
+
+        if (existingByLanIp.pppoeUsername || existingByLanIp.snModem) {
+          await db.delete(clients)
+            .where(and(
+              eq(clients.lanIp, ip),
+              eq(clients.clientType, 'HOTSPOT'),
+              ne(clients.id, existingByLanIp.id),
+              isNull(clients.lat),
+              isNull(clients.lng)
+            ))
+        }
+
+        updated++
+        console.log(`[DHCP Sync] Lease ${ip} digabung ke record yang sudah ada: ${existingByLanIp.name}`)
+      } else if (existingByMac) {
         // Update data modem hotspot yang sudah ada
         await db.update(clients)
           .set({
             lanIp: ip,
-            clientType: 'HOTSPOT',
+            clientType: existingByMac.pppoeUsername || existingByMac.snModem ? (existingByMac.clientType || 'PPPOE') : 'HOTSPOT',
             isOnline: true
           })
           .where(eq(clients.id, existingByMac.id))
@@ -1298,11 +1337,19 @@ app.post('/api/protected/devices/:id/update', async (c) => {
       if (body.wifiPassword !== undefined) clientUpdate.wifiPassword = body.wifiPassword || null
       if (body.wifiSsid5g !== undefined) clientUpdate.wifiSsid5g = body.wifiSsid5g || null
       if (body.wifiPassword5g !== undefined) clientUpdate.wifiPassword5g = body.wifiPassword5g || null
+      if (body.lanStatus !== undefined) clientUpdate.lanStatus = body.lanStatus || null
+      if (body.associatedDevices !== undefined) clientUpdate.associatedDevices = body.associatedDevices ?? null
+      if (body.brand !== undefined) clientUpdate.brand = body.brand || null
+      if (body.modelName !== undefined) clientUpdate.modelName = body.modelName || null
+      if (body.hardwareVersion !== undefined) clientUpdate.hardwareVersion = body.hardwareVersion || null
+      if (body.softwareVersion !== undefined) clientUpdate.softwareVersion = body.softwareVersion || null
       if (body.rxPower !== undefined) clientUpdate.rxPower = body.rxPower || null
       if (body.txPower !== undefined) clientUpdate.txPower = body.txPower || null
       if (body.temperature !== undefined) clientUpdate.temperature = body.temperature || null
       if (body.voltage !== undefined) clientUpdate.voltage = body.voltage || null
       if (body.wanIp !== undefined) clientUpdate.wanIp = body.wanIp || null
+      if (body.lanIp !== undefined) clientUpdate.lanIp = body.lanIp || null
+      if (body.clientType !== undefined) clientUpdate.clientType = body.clientType || null
       if (body.macAddress !== undefined) clientUpdate.macAddress = body.macAddress || null
       if (body.lat !== undefined) clientUpdate.lat = body.lat !== null && body.lat !== '' ? parseFloat(body.lat) : null
       if (body.lng !== undefined) clientUpdate.lng = body.lng !== null && body.lng !== '' ? parseFloat(body.lng) : null

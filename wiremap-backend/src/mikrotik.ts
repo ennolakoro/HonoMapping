@@ -111,7 +111,8 @@ export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: s
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`Gagal men-trigger modem: ${response.statusText}`);
+      const raw = await response.text().catch(() => '');
+      throw new Error(`Bridge trigger-modem gagal (${response.status} ${response.statusText})${raw ? `: ${raw}` : ''}`);
     }
     
     return true;
