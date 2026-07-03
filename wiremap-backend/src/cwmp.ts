@@ -148,7 +148,8 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     lanStatus,
     associatedDevices: totalAssoc,
     brand: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.Manufacturer'),
-    modelName: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.ModelName'),
+    modelName: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.ModelName') ||
+               getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.ProductClass'),
     hardwareVersion: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.HardwareVersion'),
     softwareVersion: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.SoftwareVersion'),
     macAddress: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress') ||

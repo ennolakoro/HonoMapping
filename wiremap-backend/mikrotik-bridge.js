@@ -7,6 +7,11 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+let activeCache = null;
+let dhcpCache = null;
+let secretCache = null;
+const QUERY_TIMEOUT_MS = parseInt(process.env.MIKROTIK_QUERY_TIMEOUT_MS || '35000', 10);
+
 // Helper function to extract IP and Port from MIKROTIK_IP
 function getMikrotikHostInfo() {
     const rawIp = process.env.MIKROTIK_IP || '';
@@ -53,12 +58,20 @@ app.get('/active', async (req, res) => {
 
     try {
         console.log(`Menghubungi Mikrotik API Lama di ${host}:${port}...`);
-        const client = await api.connect();
+        const client = await withTimeout(
+            api.connect(),
+            QUERY_TIMEOUT_MS,
+            `Timeout koneksi Mikrotik ${host}:${port} saat membaca PPPoE active`
+        );
         
         // Ambil daftar PPPoE Active
-        const pppoeActive = await client.menu('/ppp/active').get();
+        const pppoeActive = await withTimeout(
+            client.menu('/ppp/active').get(),
+            QUERY_TIMEOUT_MS,
+            'Timeout membaca /ppp/active dari Mikrotik'
+        );
         
-        api.close();
+        await api.close().catch(() => {});
         
         // Format agar sesuai dengan struktur yang diharapkan oleh aplikasi kita
         const formatted = pppoeActive.map(item => ({
@@ -70,9 +83,16 @@ app.get('/active', async (req, res) => {
         }));
 
         console.log(`Berhasil mendapatkan ${formatted.length} client aktif.`);
+        activeCache = { data: formatted, updatedAt: Date.now() };
         res.json(formatted);
     } catch (err) {
         console.error('Gagal menghubungi Mikrotik:', err);
+        await api.close().catch(() => {});
+        if (activeCache) {
+            console.warn(`Menggunakan cache PPPoE active (${activeCache.data.length} record). Umur cache ${Math.round((Date.now() - activeCache.updatedAt) / 1000)} detik.`);
+            res.set('X-Bridge-Cache', 'stale');
+            return res.json(activeCache.data);
+        }
         res.status(502).json({ error: 'Gagal menghubungi Mikrotik API Lama', details: err.message });
     }
 });
@@ -91,9 +111,17 @@ app.get('/ppp-secrets', async (req, res) => {
 
     try {
         console.log(`Mengambil PPP secret dari Mikrotik ${host}:${port}...`);
-        const client = await api.connect();
-        const secrets = await client.menu('/ppp/secret').get();
-        api.close();
+        const client = await withTimeout(
+            api.connect(),
+            QUERY_TIMEOUT_MS,
+            `Timeout koneksi Mikrotik ${host}:${port} saat membaca PPP secret`
+        );
+        const secrets = await withTimeout(
+            client.menu('/ppp/secret').get(),
+            QUERY_TIMEOUT_MS,
+            'Timeout membaca /ppp/secret dari Mikrotik'
+        );
+        await api.close().catch(() => {});
 
         const formatted = secrets.map(item => ({
             name: item.name || '',
@@ -104,9 +132,16 @@ app.get('/ppp-secrets', async (req, res) => {
             comment: item.comment || ''
         }));
 
+        secretCache = { data: formatted, updatedAt: Date.now() };
         res.json(formatted);
     } catch (err) {
         console.error('Gagal mengambil PPP secret:', err);
+        await api.close().catch(() => {});
+        if (secretCache) {
+            console.warn(`Menggunakan cache PPP secret (${secretCache.data.length} record). Umur cache ${Math.round((Date.now() - secretCache.updatedAt) / 1000)} detik.`);
+            res.set('X-Bridge-Cache', 'stale');
+            return res.json(secretCache.data);
+        }
         res.status(502).json({ error: 'Gagal mengambil PPP secret', details: err.message });
     }
 });
@@ -178,12 +213,20 @@ app.get('/dhcp-leases', async (req, res) => {
 
     try {
         console.log(`Mengambil DHCP lease dari Mikrotik ${host}:${port}...`);
-        const client = await api.connect();
+        const client = await withTimeout(
+            api.connect(),
+            QUERY_TIMEOUT_MS,
+            `Timeout koneksi Mikrotik ${host}:${port} saat membaca DHCP lease`
+        );
 
         // Ambil semua DHCP lease dari semua DHCP server
-        const leases = await client.menu('/ip/dhcp-server/lease').get();
+        const leases = await withTimeout(
+            client.menu('/ip/dhcp-server/lease').get(),
+            QUERY_TIMEOUT_MS,
+            'Timeout membaca /ip/dhcp-server/lease dari Mikrotik'
+        );
 
-        api.close();
+        await api.close().catch(() => {});
 
         // Format field agar konsisten dengan yang diharapkan backend
         const formatted = leases.map(lease => ({
@@ -198,9 +241,16 @@ app.get('/dhcp-leases', async (req, res) => {
         // Hanya kirim yang aktif (status = 'bound')
         const active = formatted.filter(l => l.status === 'bound');
         console.log(`Berhasil mendapatkan ${active.length} DHCP lease aktif dari total ${formatted.length}.`);
+        dhcpCache = { data: active, updatedAt: Date.now() };
         res.json(active);
     } catch (err) {
         console.error('Gagal mengambil DHCP lease dari Mikrotik:', err);
+        await api.close().catch(() => {});
+        if (dhcpCache) {
+            console.warn(`Menggunakan cache DHCP lease (${dhcpCache.data.length} record). Umur cache ${Math.round((Date.now() - dhcpCache.updatedAt) / 1000)} detik.`);
+            res.set('X-Bridge-Cache', 'stale');
+            return res.json(dhcpCache.data);
+        }
         res.status(502).json({ error: 'Gagal mengambil DHCP lease', details: err.message });
     }
 });

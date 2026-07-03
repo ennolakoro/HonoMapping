@@ -17,6 +17,11 @@ export interface MikrotikDhcpLease {
   comment?: string;
 }
 
+const BRIDGE_READ_TIMEOUT_MS = parseInt(
+  (typeof process !== 'undefined' && process.env.BRIDGE_READ_TIMEOUT_MS) || '45000',
+  10
+);
+
 /**
  * Mengambil daftar PPPoE Active dari Mikrotik.
  */
@@ -25,7 +30,7 @@ export async function getPppoeActive(mikrotikIp: string, user: string, pass: str
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/active`;
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 8000); // 8 detik timeout
+  const timeoutId = setTimeout(() => controller.abort(), BRIDGE_READ_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -36,14 +41,15 @@ export async function getPppoeActive(mikrotikIp: string, user: string, pass: str
     clearTimeout(timeoutId);
     
     if (!response.ok) {
-      throw new Error(`Mikrotik API Error: ${response.statusText}`);
+      const raw = await response.text().catch(() => '');
+      throw new Error(`Bridge PPPoE active error: ${response.status} ${response.statusText}${raw ? `: ${raw}` : ''}`);
     }
     
     return await response.json(); // Array of objects
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError' || error.message.includes('abort')) {
-      throw new Error(`Koneksi ke Mikrotik RTO (Timeout 8 detik). Pastikan port REST API sudah benar (Biasanya 80/443, bukan 2001) dan tidak terblokir firewall.`);
+      throw new Error(`Timeout ${Math.round(BRIDGE_READ_TIMEOUT_MS / 1000)} detik membaca PPPoE active dari bridge. Pastikan bridge berjalan dan API RouterOS port 8728 bisa diakses.`);
     }
     console.error("Gagal menarik data PPPoE:", error);
     throw error;
@@ -58,7 +64,7 @@ export async function getPppoeSecrets(mikrotikIp: string, user: string, pass: st
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/ppp-secrets`;
 
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 12000);
+  const timeoutId = setTimeout(() => controller.abort(), BRIDGE_READ_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -77,7 +83,7 @@ export async function getPppoeSecrets(mikrotikIp: string, user: string, pass: st
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Timeout membaca PPP secret dari bridge. Pastikan endpoint /ppp-secrets tersedia dan bridge bisa akses Mikrotik.');
+      throw new Error(`Timeout ${Math.round(BRIDGE_READ_TIMEOUT_MS / 1000)} detik membaca PPP secret dari bridge. Pastikan endpoint /ppp-secrets tersedia dan bridge bisa akses Mikrotik.`);
     }
     console.error("Gagal menarik PPP secret:", error);
     throw error;
@@ -97,7 +103,7 @@ export async function getDhcpLeases(
 ): Promise<MikrotikDhcpLease[]> {
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/dhcp-leases`;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 10000);
+  const timeoutId = setTimeout(() => controller.abort(), BRIDGE_READ_TIMEOUT_MS);
 
   try {
     const response = await fetch(url, {
@@ -107,7 +113,8 @@ export async function getDhcpLeases(
     clearTimeout(timeoutId);
 
     if (!response.ok) {
-      throw new Error(`Bridge DHCP Error: ${response.status} ${response.statusText}`);
+      const raw = await response.text().catch(() => '');
+      throw new Error(`Bridge DHCP Error: ${response.status} ${response.statusText}${raw ? `: ${raw}` : ''}`);
     }
 
     const leases: MikrotikDhcpLease[] = await response.json();
@@ -116,7 +123,7 @@ export async function getDhcpLeases(
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error('Timeout saat mengambil DHCP lease dari bridge. Pastikan bridge berjalan dan endpoint /dhcp-leases tersedia.');
+      throw new Error(`Timeout ${Math.round(BRIDGE_READ_TIMEOUT_MS / 1000)} detik mengambil DHCP lease dari bridge. Pastikan bridge berjalan dan endpoint /dhcp-leases tersedia.`);
     }
     console.error("Gagal menarik data DHCP lease:", error);
     throw error;

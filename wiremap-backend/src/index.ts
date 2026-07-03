@@ -21,6 +21,9 @@ type Variables = {
 
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
+let lastGarbageCleanupAt = 0
+const GARBAGE_CLEANUP_INTERVAL_MS = 60000
+
 
 app.use('*', cors())
 
@@ -154,6 +157,11 @@ const isSameDeviceMac = (mac1: string, mac2: string): boolean => {
 // Fungsi membersihkan data sampah/duplikat dan IP Publik NAT yang tidak valid di DB
 const cleanupOldGarbageData = async (db: any) => {
   try {
+    const now = Date.now()
+    if (now - lastGarbageCleanupAt < GARBAGE_CLEANUP_INTERVAL_MS) {
+      return
+    }
+    lastGarbageCleanupAt = now
     console.log('[Cleanup] Memulai pembersihan IP Publik dan duplikat di DB...')
     
     // 1. Bersihkan IP Publik 36.75.220.32 dari semua data client (set ke null)
@@ -227,6 +235,10 @@ interface CwmpSession {
   currentTriggeredClientId: number | null;
   currentProgressKeys: string[];
   currentClientIp: string | null;
+  currentManufacturer: string | null;
+  currentModelName: string | null;
+  currentHardwareVersion: string | null;
+  currentSoftwareVersion: string | null;
   gponFaultRetried: boolean;
   updatedAt: number;
 }
@@ -271,6 +283,21 @@ const setProgressForKeys = (keys: string[], progress: SyncProgress) => {
   for (const key of keys) {
     syncProgress.set(key, { ...progress })
   }
+}
+
+const stripUndefined = (record: Record<string, any>) =>
+  Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined))
+
+const inferModemInfoFromSn = (sn?: string | null) => {
+  const normalized = (sn || '').toUpperCase()
+  if (!normalized) return {}
+  if (normalized.startsWith('485754') || normalized.startsWith('HWTC')) {
+    return {
+      brand: 'Huawei Technologies Co., Ltd',
+      modelName: 'EG8145V5'
+    }
+  }
+  return {}
 }
 
 // Membersihkan sesi & progress kedaluwarsa secara berkala
@@ -379,8 +406,9 @@ const cwmpHandler = async (c: any) => {
         clientName = existing[0].name
         // Update status online & basic info
         await db.update(clients)
-          .set(updatePayload)
+          .set(stripUndefined(updatePayload))
           .where(eq(clients.id, clientId))
+        console.log(`[DB] Metadata Inform disimpan untuk ${clientName}: brand=${informData.manufacturer || 'N/A'}, model=${informData.modelName || 'N/A'}, hw=${informData.hardwareVersion || 'N/A'}, sw=${informData.softwareVersion || 'N/A'}`)
       } else {
         // Auto-Discovery: CPE belum terdaftar! Auto insert ke tabel clients!
         const inserted = await db.insert(clients).values({
@@ -417,10 +445,16 @@ const cwmpHandler = async (c: any) => {
       
       // Parameter standar WLAN untuk semua ONT
       const baseWlanParams = [
+        'InternetGatewayDevice.DeviceInfo.Manufacturer',
+        'InternetGatewayDevice.DeviceInfo.ModelName',
+        'InternetGatewayDevice.DeviceInfo.ProductClass',
+        'InternetGatewayDevice.DeviceInfo.HardwareVersion',
+        'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
@@ -497,6 +531,10 @@ const cwmpHandler = async (c: any) => {
         currentTriggeredClientId: clientId,
         currentProgressKeys: progressKeys,
         currentClientIp,
+        currentManufacturer: informData.manufacturer || null,
+        currentModelName: informData.modelName || null,
+        currentHardwareVersion: informData.hardwareVersion || null,
+        currentSoftwareVersion: informData.softwareVersion || null,
         gponFaultRetried: false,
         updatedAt: Date.now()
       }
@@ -563,26 +601,26 @@ const cwmpHandler = async (c: any) => {
       // 2. Simpan ke database
       if (session.currentModemSN) {
         try {
-          const modemParams = {
+          const modemParams = stripUndefined({
             snModem: session.currentModemSN || undefined,
-            wifiSsid: params.ssid ?? null,
-            wifiPassword: params.password ?? null,
-            wifiSsid5g: params.ssid5g ?? null,
-            wifiPassword5g: params.password5g ?? null,
-            lanStatus: params.lanStatus ?? null,
-            associatedDevices: params.associatedDevices ?? null,
-            brand: params.brand ?? null,
-            modelName: params.modelName ?? null,
-            hardwareVersion: params.hardwareVersion ?? null,
-            softwareVersion: params.softwareVersion ?? null,
-            macAddress: params.macAddress ?? null,
-            wanIp: params.wanIp && !isPublicIp(params.wanIp) ? params.wanIp : null,
+            wifiSsid: params.ssid ?? undefined,
+            wifiPassword: params.password ?? undefined,
+            wifiSsid5g: params.ssid5g ?? undefined,
+            wifiPassword5g: params.password5g ?? undefined,
+            lanStatus: params.lanStatus ?? undefined,
+            associatedDevices: params.associatedDevices ?? undefined,
+            brand: params.brand ?? session.currentManufacturer ?? undefined,
+            modelName: params.modelName ?? session.currentModelName ?? undefined,
+            hardwareVersion: params.hardwareVersion ?? session.currentHardwareVersion ?? undefined,
+            softwareVersion: params.softwareVersion ?? session.currentSoftwareVersion ?? undefined,
+            macAddress: params.macAddress ?? undefined,
+            wanIp: params.wanIp && !isPublicIp(params.wanIp) ? params.wanIp : undefined,
             lanIp: session.currentClientIp || (isPublicIp(clientIp) ? undefined : clientIp),
-            rxPower: params.rxPower ?? null,
-            txPower: params.txPower ?? null,
-            temperature: params.temperature ?? null,
-            voltage: params.voltage ?? null
-          }
+            rxPower: params.rxPower ?? undefined,
+            txPower: params.txPower ?? undefined,
+            temperature: params.temperature ?? undefined,
+            voltage: params.voltage ?? undefined
+          })
 
           let updatedRows: { id: number }[] = []
           if (session.currentTriggeredClientId) {
@@ -808,6 +846,7 @@ app.get('/api/protected/devices', async (c) => {
       // Modem HOTSPOT tidak punya wanIp (PPPoE), pakai lanIp
       const safeWanIp = client.wanIp && !isPublicIp(client.wanIp) ? client.wanIp : null
       const triggerIp = client.lanIp || safeWanIp
+      const inferredModem = inferModemInfoFromSn(client.snModem)
       return {
         id: client.id + 1000000, // Pseudo-ID agar tidak bentrok dengan ID device
         type: 'CLIENT',
@@ -824,8 +863,8 @@ app.get('/api/protected/devices', async (c) => {
         wifiPassword5g: client.wifiPassword5g,
         lanStatus: client.lanStatus,
         associatedDevices: client.associatedDevices,
-        brand: client.brand,
-        modelName: client.modelName,
+        brand: client.brand || inferredModem.brand || null,
+        modelName: client.modelName || inferredModem.modelName || null,
         hardwareVersion: client.hardwareVersion,
         softwareVersion: client.softwareVersion,
         macAddress: client.macAddress,
@@ -993,9 +1032,15 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
       ip: string;
     }
     let pppoeClients: PppoeClientInfo[] = []
-    
-    try {
-      const pppoeList = await getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+
+    console.log(`[DHCP Sync] Mulai tarik PPPoE active dan DHCP lease via bridge=${MIKROTIK_BRIDGE_URL || 'http://127.0.0.1:3005'}`)
+    const [pppoeResult, dhcpResult] = await Promise.allSettled([
+      getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL),
+      getDhcpLeases(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+    ])
+
+    if (pppoeResult.status === 'fulfilled') {
+      const pppoeList = pppoeResult.value
       for (const p of pppoeList) {
         const username = p.name || p.user || p.username || ''
         const mac = (p['caller-id'] || p.callerId || p.macAddress || p.mac || '').toLowerCase().trim()
@@ -1005,12 +1050,20 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
         }
       }
       console.log(`[DHCP Sync] PPPoE Clients terkumpul: ${pppoeClients.length}`)
-    } catch (err) {
-      console.warn('[DHCP Sync] Gagal mengambil PPPoE active (lanjut tanpa cross-ref):', err)
+    } else {
+      console.warn('[DHCP Sync] Gagal mengambil PPPoE active (lanjut tanpa cross-ref):', pppoeResult.reason)
     }
 
     // === Langkah 2: Ambil semua DHCP Leases aktif ===
-    const leases = await getDhcpLeases(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+    if (dhcpResult.status === 'rejected') {
+      console.error('[DHCP Sync] Gagal mengambil DHCP lease:', dhcpResult.reason)
+      return c.json({
+        error: 'Gagal mengambil DHCP lease dari bridge',
+        details: dhcpResult.reason?.message || String(dhcpResult.reason)
+      }, 502)
+    }
+
+    const leases = dhcpResult.value
     if (!leases || leases.length === 0) {
       return c.json({ message: 'Tidak ada DHCP lease aktif.', total: 0, created: 0, updated: 0, skipped: 0 })
     }
