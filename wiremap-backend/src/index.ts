@@ -200,14 +200,39 @@ const cleanupOldGarbageData = async (db: any) => {
 
       if (c.lat === null && c.lng === null && (c.name.startsWith('ONT-') || c.name.startsWith('MODEM-'))) {
         // Cek apakah ada record lain yang lebih valid (misalnya record PPPoE dengan MAC yang mirip atau data lebih lengkap)
-        const hasBetterDuplicate = all.some((other: any) => 
+        const betterDuplicate = all.find((other: any) =>
           other.id !== c.id && 
           (
             (other.pppoeUsername && other.snModem === c.snModem) ||
             (c.macAddress && other.macAddress && isSameDeviceMac(c.macAddress, other.macAddress))
           )
         )
-        if (hasBetterDuplicate) {
+        if (betterDuplicate) {
+          const merged = stripUndefined({
+            snModem: betterDuplicate.snModem || c.snModem || undefined,
+            wifiSsid: betterDuplicate.wifiSsid || c.wifiSsid || undefined,
+            wifiPassword: betterDuplicate.wifiPassword || c.wifiPassword || undefined,
+            wifiSsid5g: betterDuplicate.wifiSsid5g || c.wifiSsid5g || undefined,
+            wifiPassword5g: betterDuplicate.wifiPassword5g || c.wifiPassword5g || undefined,
+            lanStatus: betterDuplicate.lanStatus || c.lanStatus || undefined,
+            associatedDevices: betterDuplicate.associatedDevices ?? c.associatedDevices ?? undefined,
+            brand: betterDuplicate.brand || c.brand || undefined,
+            modelName: betterDuplicate.modelName || c.modelName || undefined,
+            hardwareVersion: betterDuplicate.hardwareVersion || c.hardwareVersion || undefined,
+            softwareVersion: betterDuplicate.softwareVersion || c.softwareVersion || undefined,
+            macAddress: betterDuplicate.macAddress || c.macAddress || undefined,
+            wanIp: betterDuplicate.wanIp || c.wanIp || undefined,
+            lanIp: betterDuplicate.lanIp || c.lanIp || undefined,
+            rxPower: betterDuplicate.rxPower || c.rxPower || undefined,
+            txPower: betterDuplicate.txPower || c.txPower || undefined,
+            temperature: betterDuplicate.temperature || c.temperature || undefined,
+            voltage: betterDuplicate.voltage || c.voltage || undefined,
+            isOnline: betterDuplicate.isOnline || c.isOnline || undefined
+          })
+          await db.update(clients)
+            .set(merged)
+            .where(eq(clients.id, betterDuplicate.id))
+          console.log(`[Cleanup] Merge data modem dari ${c.name} ke ${betterDuplicate.name} sebelum hapus duplikat`)
           toDeleteIds.push(c.id)
         }
       }
@@ -376,13 +401,21 @@ const cwmpHandler = async (c: any) => {
         ? informData.ipAddress
         : connectionRequestIp || (isPublicIp(clientIp) ? null : clientIp)
 
-      if (!existing[0] && currentClientIp) {
-        existing = await db.select()
+      if (currentClientIp) {
+        const existingByLanIp = await db.select()
           .from(clients)
           .where(eq(clients.lanIp, currentClientIp))
           .limit(1)
-        if (existing[0]) {
-          console.log(`[MiniACS] SN ${informData.SerialNumber} dicocokkan ke client ${existing[0].name} berdasarkan lanIp ${currentClientIp}`)
+        if (
+          existingByLanIp[0] &&
+          (
+            !existing[0] ||
+            existingByLanIp[0].pppoeUsername ||
+            (existing[0].name?.startsWith('ONT-') && !existing[0].pppoeUsername)
+          )
+        ) {
+          existing = existingByLanIp
+          console.log(`[MiniACS] SN ${informData.SerialNumber} diprioritaskan ke client ${existing[0].name} berdasarkan lanIp ${currentClientIp}`)
         }
       }
 
