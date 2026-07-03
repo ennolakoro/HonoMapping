@@ -243,6 +243,8 @@ interface SyncProgress {
 }
 
 const syncProgress = new Map<string, SyncProgress>();
+const ACTIVE_SYNC_TIMEOUT_MS = 120000;
+const FINISHED_SYNC_RETENTION_MS = 60000;
 
 const normalizeProgressKeys = (keys: Array<string | null | undefined>) =>
   [...new Set(keys.filter((key): key is string => Boolean(key)))]
@@ -280,7 +282,7 @@ const cleanExpiredSessions = () => {
     }
   }
   for (const [ip, progress] of syncProgress.entries()) {
-    const timeout = (progress.status === 'success' || progress.status === 'failed') ? 60000 : 30000
+    const timeout = (progress.status === 'success' || progress.status === 'failed') ? FINISHED_SYNC_RETENTION_MS : ACTIVE_SYNC_TIMEOUT_MS
     if (now - progress.updatedAt > timeout) {
       if (progress.status === 'triggered' || progress.status === 'connected' || progress.status === 'fetching') {
         console.warn(`[SYNC] Timeout menunggu Inform untuk ${ip} (${progress.username}) status=${progress.status}`)
@@ -288,7 +290,7 @@ const cleanExpiredSessions = () => {
           ...progress,
           progress: 100,
           status: 'failed',
-          error: 'Timeout menunggu modem mengirim Inform. Cek akses Mikrotik ke IP modem dan CWMP URL/port 7547.',
+          error: 'Timeout 2 menit menunggu modem mengirim Inform. Cek akses Mikrotik ke IP modem dan CWMP URL/port 7547.',
           updatedAt: now
         })
       } else {
