@@ -146,6 +146,11 @@ export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: s
 
     if (!response.ok) {
       const raw = await response.text().catch(() => '');
+      const timeoutLike = response.status === 502 && /timed out|timeout|gagal trigger modem/i.test(raw);
+      if (timeoutLike) {
+        console.warn(`Bridge trigger-modem timeout untuk ${modemIp}. Inform tetap ditunggu dari modem. Detail: ${raw}`);
+        return false;
+      }
       throw new Error(`Bridge trigger-modem gagal (${response.status} ${response.statusText})${raw ? `: ${raw}` : ''}`);
     }
     
@@ -153,7 +158,8 @@ export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: s
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError') {
-      throw new Error(`Timeout 30 detik saat memanggil bridge /trigger-modem untuk ${modemIp}. Bridge atau koneksi Mikrotik lambat/tidak merespons.`);
+      console.warn(`Timeout 30 detik saat memanggil bridge /trigger-modem untuk ${modemIp}. Inform tetap ditunggu dari modem.`);
+      return false;
     }
     console.error("Gagal eksekusi tool fetch di Bridge:", error);
     throw error;

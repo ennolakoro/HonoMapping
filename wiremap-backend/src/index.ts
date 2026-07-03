@@ -701,9 +701,15 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
       updatedAt: Date.now()
     })
 
-    // Menyuruh Mikrotik "mencolek" modem
-    await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
-    return c.json({ message: `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal` })
+    // Menyuruh Mikrotik "mencolek" modem. Bridge lama bisa timeout 10 detik,
+    // tetapi Inform dari ONT masih bisa masuk setelah request ini selesai.
+    const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
+    return c.json({
+      message: triggered
+        ? `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal`
+        : `Trigger modem ${modemIp} sedang ditunggu. Jika belum masuk, cek Bridge/Mikrotik dan CWMP modem.`,
+      queued: !triggered
+    })
   } catch (err: any) {
     syncProgress.set(modemIp, {
       id: null,
