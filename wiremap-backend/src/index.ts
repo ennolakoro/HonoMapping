@@ -824,13 +824,15 @@ app.delete('/api/protected/devices/:id', async (c) => {
   try {
     if (type === 'CLIENT' || id >= 1000000) {
       const dbId = id >= 1000000 ? id - 1000000 : id
-      await db.delete(clients).where(eq(clients.id, dbId))
+      await db.update(clients)
+        .set({ odpId: null, odpPort: null, lat: null, lng: null, cablePath: null })
+        .where(eq(clients.id, dbId))
     } else {
       await db.update(devices)
         .set({ parentId: null })
         .where(eq(devices.parentId, id))
       await db.update(clients)
-        .set({ odpId: null, lat: null, lng: null, cablePath: null })
+        .set({ odpId: null, odpPort: null, lat: null, lng: null, cablePath: null })
         .where(eq(clients.odpId, id))
       await db.delete(devices).where(eq(devices.id, id))
     }
