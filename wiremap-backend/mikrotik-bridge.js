@@ -25,6 +25,17 @@ function withTimeout(promise, ms, message) {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
+function createRouterClient() {
+    const { host, port } = getMikrotikHostInfo();
+    return new RouterOSClient({
+        host,
+        user: process.env.MIKROTIK_USER,
+        password: process.env.MIKROTIK_PASS,
+        port,
+        timeout: parseInt(process.env.MIKROTIK_API_TIMEOUT || '30', 10)
+    });
+}
+
 app.get('/active', async (req, res) => {
     const { host, port } = getMikrotikHostInfo();
     const user = process.env.MIKROTIK_USER;
@@ -34,12 +45,7 @@ app.get('/active', async (req, res) => {
         return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
     }
 
-    const api = new RouterOSClient({
-        host: host,
-        user: user,
-        password: password,
-        port: port
-    });
+    const api = createRouterClient();
 
     api.on('error', (err) => {
         console.log('RouterOS Error:', err.message);
@@ -59,7 +65,8 @@ app.get('/active', async (req, res) => {
             name: item.name,
             address: item.address,
             uptime: item.uptime,
-            service: item.service
+            service: item.service,
+            'caller-id': item['caller-id'] || item.callerId || item.macAddress || item.mac || ''
         }));
 
         console.log(`Berhasil mendapatkan ${formatted.length} client aktif.`);
@@ -79,7 +86,7 @@ app.get('/ppp-secrets', async (req, res) => {
         return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
     }
 
-    const api = new RouterOSClient({ host, user, password, port });
+    const api = createRouterClient();
     api.on('error', (err) => console.log('RouterOS Error:', err.message));
 
     try {
@@ -113,39 +120,45 @@ app.post('/trigger-modem', async (req, res) => {
     const user = process.env.MIKROTIK_USER;
     const password = process.env.MIKROTIK_PASS;
 
-    const api = new RouterOSClient({ host, user, password, port });
-    api.on('error', (err) => console.log('RouterOS Error:', err.message));
+    res.status(202).json({ success: true, queued: true, message: `Trigger modem ${ip} masuk antrian bridge` });
 
-    try {
-        console.log(`Men-trigger modem ${ip} via Mikrotik API...`);
-        const client = await withTimeout(
-            api.connect(),
-            20000,
-            `Timeout koneksi Mikrotik ${host}:${port} saat trigger modem ${ip}`
-        );
-        
-        // Eksekusi /tool/fetch untuk mencolek modem beserta Autentikasi
-        const modemUrl = `http://${ip}:7547/`;
-        const modemUser = process.env.MODEM_CWMP_USER || 'admin';
-        const modemPass = process.env.MODEM_CWMP_PASS || 'admin';
-        
-        // Catatan: exec mengembalikan promise yang jalan di background. 
-        client.menu('/tool/fetch').exec({
-            url: modemUrl,
-            user: modemUser,
-            password: modemPass,
-            "keep-result": "no"
-        }).then(() => {}).catch(() => {});
-        
-        // Beri waktu sejenak agar request terkirim
-        await new Promise(resolve => setTimeout(resolve, 500));
-        
-        api.close();
-        res.json({ success: true, message: `Berhasil men-trigger modem ${ip}` });
-    } catch (err) {
-        console.error('Gagal trigger modem:', err);
-        res.status(502).json({ error: 'Gagal trigger modem via Mikrotik API', details: err.message });
-    }
+    setImmediate(async () => {
+        const api = createRouterClient();
+        api.on('error', (err) => console.log('RouterOS Error:', err.message));
+
+        try {
+            console.log(`Men-trigger modem ${ip} via Mikrotik API background...`);
+            const client = await withTimeout(
+                api.connect(),
+                35000,
+                `Timeout koneksi Mikrotik ${host}:${port} saat trigger modem ${ip}`
+            );
+
+            const modemUrl = `http://${ip}:7547/`;
+            const modemUser = process.env.MODEM_CWMP_USER || 'admin';
+            const modemPass = process.env.MODEM_CWMP_PASS || 'admin';
+
+            await withTimeout(
+                client.menu('/tool/fetch').exec({
+                    url: modemUrl,
+                    user: modemUser,
+                    password: modemPass,
+                    "keep-result": "no"
+                }),
+                12000,
+                `Timeout /tool fetch ke ${ip}:7547`
+            ).catch((err) => {
+                // Banyak modem hanya perlu dipoke; fetch bisa timeout walau request sudah terkirim.
+                console.warn(`Trigger modem ${ip} selesai dengan warning: ${err.message}`);
+            });
+
+            await api.close().catch(() => {});
+            console.log(`Trigger modem ${ip} selesai diproses bridge.`);
+        } catch (err) {
+            console.error(`Gagal trigger modem background ${ip}:`, err);
+            await api.close().catch(() => {});
+        }
+    });
 });
 
 // Endpoint untuk mengambil semua DHCP Lease aktif dari Mikrotik
@@ -160,7 +173,7 @@ app.get('/dhcp-leases', async (req, res) => {
         return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
     }
 
-    const api = new RouterOSClient({ host, user, password, port });
+    const api = createRouterClient();
     api.on('error', (err) => console.log('RouterOS Error:', err.message));
 
     try {

@@ -253,7 +253,17 @@ const cleanExpiredSessions = () => {
   for (const [ip, progress] of syncProgress.entries()) {
     const timeout = (progress.status === 'success' || progress.status === 'failed') ? 60000 : 30000
     if (now - progress.updatedAt > timeout) {
-      syncProgress.delete(ip)
+      if (progress.status === 'triggered' || progress.status === 'connected' || progress.status === 'fetching') {
+        syncProgress.set(ip, {
+          ...progress,
+          progress: 100,
+          status: 'failed',
+          error: 'Timeout menunggu modem mengirim Inform. Cek akses Mikrotik ke IP modem dan CWMP URL/port 7547.',
+          updatedAt: now
+        })
+      } else {
+        syncProgress.delete(ip)
+      }
     }
   }
 }
