@@ -386,6 +386,11 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
     return c.json({ error: 'Gagal men-trigger modem', details: err.message }, 502)
   }
 })
+    return c.json({ message: `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal` })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal men-trigger modem', details: err.message }, 502)
+  }
+})
 
 // Endpoint Topologi
 app.get('/api/protected/devices', async (c) => {
@@ -420,7 +425,8 @@ app.get('/api/protected/devices', async (c) => {
     txPower: client.txPower,
     temperature: client.temperature,
     voltage: client.voltage,
-    isOnline: client.isOnline
+    isOnline: client.isOnline,
+    cablePath: client.cablePath
   }))
 
   return c.json([...allDevices, ...mappedClients])
@@ -462,7 +468,8 @@ app.post('/api/protected/devices', async (c) => {
         lat,
         lng,
         pppoeUsername: body.pppoeUsername || null,
-        snModem: body.snModem || null
+        snModem: body.snModem || null,
+        cablePath: body.cablePath || null
       }).returning()
       return c.json(result[0], 201)
     } else {
@@ -478,7 +485,8 @@ app.post('/api/protected/devices', async (c) => {
         lat,
         lng,
         capacity: capacity,
-        portsCount: portsCount
+        portsCount: portsCount,
+        cablePath: body.cablePath || null
       }).returning()
       
       return c.json(result[0], 201)
@@ -733,11 +741,17 @@ app.post('/api/protected/devices/:id/update-parent', async (c) => {
     if (type === 'CLIENT') {
       const dbId = id >= 1000000 ? id - 1000000 : id
       await db.update(clients)
-        .set({ odpId: parentId })
+        .set({ 
+          odpId: parentId,
+          ...(parentId === null ? { cablePath: null } : {})
+        })
         .where(eq(clients.id, dbId))
     } else {
       await db.update(devices)
-        .set({ parentId: parentId })
+        .set({ 
+          parentId: parentId,
+          ...(parentId === null ? { cablePath: null } : {})
+        })
         .where(eq(devices.id, id))
     }
     return c.json({ success: true, message: 'Jalur kabel berhasil diperbarui' })
@@ -772,6 +786,7 @@ app.post('/api/protected/devices/:id/update', async (c) => {
       if (body.macAddress !== undefined) clientUpdate.macAddress = body.macAddress || null
       if (body.lat !== undefined) clientUpdate.lat = body.lat !== null && body.lat !== '' ? parseFloat(body.lat) : null
       if (body.lng !== undefined) clientUpdate.lng = body.lng !== null && body.lng !== '' ? parseFloat(body.lng) : null
+      if (body.cablePath !== undefined) clientUpdate.cablePath = body.cablePath || null
 
       await db.update(clients)
         .set(clientUpdate)
@@ -784,6 +799,7 @@ app.post('/api/protected/devices/:id/update', async (c) => {
           lng: body.lng ? parseFloat(body.lng) : null,
           capacity: body.capacity ? parseInt(body.capacity, 10) : null,
           portsCount: body.portsCount ? parseInt(body.portsCount, 10) : null,
+          cablePath: body.cablePath !== undefined ? (body.cablePath || null) : undefined
         })
         .where(eq(devices.id, id))
     }
@@ -814,7 +830,7 @@ app.delete('/api/protected/devices/:id', async (c) => {
         .set({ parentId: null })
         .where(eq(devices.parentId, id))
       await db.update(clients)
-        .set({ odpId: null })
+        .set({ odpId: null, lat: null, lng: null, cablePath: null })
         .where(eq(clients.odpId, id))
       await db.delete(devices).where(eq(devices.id, id))
     }

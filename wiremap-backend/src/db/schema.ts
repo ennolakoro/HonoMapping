@@ -48,6 +48,7 @@ export const devices = sqliteTable("devices", {
   lng: real("lng"),
   capacity: integer("capacity"), // For ODC
   portsCount: integer("ports_count"), // For ODP
+  cablePath: text("cable_path")
 });
 
 export const clients = sqliteTable("clients", {
@@ -76,7 +77,8 @@ export const clients = sqliteTable("clients", {
   temperature: text("temperature"),
   voltage: text("voltage"),
   rxPower: text("rx_power"),
-  isOnline: integer("is_online", { mode: "boolean" }).default(false)
+  isOnline: integer("is_online", { mode: "boolean" }).default(false),
+  cablePath: text("cable_path")
 });
 
 export const settings = sqliteTable("settings", {
