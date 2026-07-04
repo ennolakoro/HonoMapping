@@ -269,17 +269,27 @@ const configForm = ref({
   wifiPassword5g: ''
 })
 
+const resetConfigFormFromDevice = (device = props.device) => {
+  configForm.value = {
+    pppoeUsername: device?.pppoeUsername || '',
+    pppoePassword: '',
+    wifiSsid: device?.wifiSsid || '',
+    wifiPassword: device?.wifiPassword || '',
+    wifiSsid5g: device?.wifiSsid5g || '',
+    wifiPassword5g: device?.wifiPassword5g || ''
+  }
+}
+
+watch(() => props.device?.id, () => {
+  if (!showConfigForm.value) return
+  resetConfigFormFromDevice()
+  configMessage.value = ''
+})
+
 const handleOpenConfig = () => {
   showConfigForm.value = !showConfigForm.value
   if (showConfigForm.value) {
-    configForm.value = {
-      pppoeUsername: props.device?.pppoeUsername || '',
-      pppoePassword: '', // Password tidak ditarik dari DB untuk keamanan, biarkan kosong kecuali ingin ganti
-      wifiSsid: props.device?.wifiSsid || '',
-      wifiPassword: props.device?.wifiPassword || '',
-      wifiSsid5g: props.device?.wifiSsid5g || '',
-      wifiPassword5g: props.device?.wifiPassword5g || ''
-    }
+    resetConfigFormFromDevice()
     configMessage.value = ''
   }
 }
@@ -397,7 +407,9 @@ const handlePushConfig = async () => {
 
           <div class="status-line">
             <span>Status</span>
-            <strong>ONLINE</strong>
+            <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }">
+              {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
+            </strong>
           </div>
         </section>
 
@@ -476,6 +488,15 @@ const handlePushConfig = async () => {
               <label class="form-field full">
                 <span>Password 2.4GHz</span>
                 <input v-model="configForm.wifiPassword" type="text" placeholder="Biarkan kosong jika tidak diubah" />
+              </label>
+
+              <label class="form-field full">
+                <span>SSID 5GHz</span>
+                <input v-model="configForm.wifiSsid5g" placeholder="Nama WiFi 5G" />
+              </label>
+              <label class="form-field full">
+                <span>Password 5GHz</span>
+                <input v-model="configForm.wifiPassword5g" type="text" placeholder="Biarkan kosong jika tidak diubah" />
               </label>
 
               <button type="submit" :disabled="isPushingConfig" class="save-button push-btn mt-3">

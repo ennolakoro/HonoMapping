@@ -79,6 +79,7 @@ export const clients = sqliteTable("clients", {
   voltage: text("voltage"),
   rxPower: text("rx_power"),
   isOnline: integer("is_online", { mode: "boolean" }).default(false),
+  offlineReason: text("offline_reason"),
   cablePath: text("cable_path"),
   // Tipe client: 'PPPOE' | 'HOTSPOT' | 'UNKNOWN'
   // PPPOE  = terdeteksi via /ppp/active Mikrotik

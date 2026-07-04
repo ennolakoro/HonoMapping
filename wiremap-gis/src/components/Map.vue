@@ -21,8 +21,8 @@ const informStatus = ref('')
 const isInformingAll = ref(false)
 const isWorkflowOpen = ref(false)
 const workflowSearch = ref('')
-// Filter antrian: 'ALL' | 'PPPOE' | 'HOTSPOT'
-const queueFilter = ref('ALL')
+// Filter status plotting: 'UNMAPPED' | 'PLOTTED'
+const queuePlotFilter = ref('UNMAPPED')
 
 const syncProgressMap = ref({})
 let pollInterval = null
@@ -165,6 +165,14 @@ const unmappedClients = computed(() =>
   allDevicesData.value.filter(device => device.type === 'CLIENT' && !hasCoords(device))
 )
 
+const allClients = computed(() =>
+  allDevicesData.value.filter(device => device.type === 'CLIENT')
+)
+
+const plottedClients = computed(() =>
+  allClients.value.filter(device => hasCoords(device))
+)
+
 const hasModemData = (device) => [
   device?.wifiSsid,
   device?.wifiSsid5g,
@@ -184,15 +192,6 @@ const isClientWaitingPersistedData = (device) =>
 
 const isClientReadyForPlot = (device) => hasModemData(device)
 
-const canPlotClient = (device) => [
-  device?.pppoeUsername,
-  device?.lanIp,
-  device?.wanIp,
-  device?.triggerIp,
-  device?.snModem,
-  device?.name
-].some(value => value !== null && value !== undefined && value !== '')
-
 const matchesWorkflowSearch = (device) => {
   const query = workflowSearch.value.trim().toLowerCase()
   if (!query) return true
@@ -207,6 +206,7 @@ const matchesWorkflowSearch = (device) => {
 
 const getQueuePriority = (device) => {
   let score = 0
+  if (hasCoords(device)) score += 120
   if (isClientReadyForPlot(device)) score += 100
   if (device?.pppoeUsername) score += 40
   if (device?.snModem) score += 30
@@ -215,11 +215,11 @@ const getQueuePriority = (device) => {
   return score
 }
 
-const visibleUnmappedClients = computed(() => {
-  const filtered = unmappedClients.value.filter(d => {
+const visibleWorkflowClients = computed(() => {
+  const filtered = allClients.value.filter(d => {
     if (!matchesWorkflowSearch(d)) return false
-    if (queueFilter.value === 'PPPOE') return (d.clientType || 'PPPOE') === 'PPPOE'
-    if (queueFilter.value === 'HOTSPOT') return d.clientType === 'HOTSPOT'
+    if (queuePlotFilter.value === 'UNMAPPED' && hasCoords(d)) return false
+    if (queuePlotFilter.value === 'PLOTTED' && !hasCoords(d)) return false
     return true
   })
 
@@ -235,8 +235,12 @@ const visibleUnmappedClients = computed(() => {
   return Array.from(byIdentity.values())
 })
 
+const visibleUnmappedClients = computed(() =>
+  visibleWorkflowClients.value.filter(device => !hasCoords(device))
+)
+
 const informableClients = computed(() =>
-  visibleUnmappedClients.value.filter(device => !!getClientTriggerIp(device) && !isClientReadyForPlot(device) && !isClientSyncing(device))
+  visibleWorkflowClients.value.filter(device => !!getClientTriggerIp(device) && !isClientReadyForPlot(device) && !isClientSyncing(device))
 )
 
 const odpOptions = computed(() =>
@@ -283,7 +287,10 @@ const handleLihatDetailEvent = (e) => {
 }
 
 const getClientHealth = (device) => {
-  if (!device?.isOnline) return 'offline'
+  if (!device?.isOnline) {
+    if (device?.offlineReason === 'POWER_FAILURE') return 'power_failure'
+    return 'offline'
+  }
   const rx = parseFloat(device.rxPower)
   if (Number.isNaN(rx)) return 'good'
   if (rx <= -28) return 'offline'
@@ -330,8 +337,15 @@ const getIconForType = (type, device = null) => {
   }
   
   if (type === 'ODC' || type === 'ODP') {
-    bgColor = type === 'ODC' ? '#64748b' : '#d97706'
-    const glowColor = type === 'ODC' ? 'rgba(100, 116, 139, 0.45)' : 'rgba(217, 119, 6, 0.45)'
+    let isMassLos = false
+    if (type === 'ODP' && device) {
+      const odpClients = allDevicesData.value.filter(d => d.type === 'CLIENT' && d.parentId === device.id)
+      isMassLos = odpClients.length >= 3 && odpClients.every(c => !c.isOnline)
+    }
+
+    const bgColor = type === 'ODC' ? '#64748b' : (isMassLos ? '#dc2626' : '#d97706')
+    const glowColor = type === 'ODC' ? 'rgba(100, 116, 139, 0.45)' : (isMassLos ? 'rgba(220, 38, 38, 0.85)' : 'rgba(217, 119, 6, 0.45)')
+    
     svgContent = `
       <svg viewBox="0 0 24 24" width="22" height="22" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0px 2px 4px ${glowColor});">
         <rect x="2" y="4" width="20" height="16" rx="3" fill="${bgColor}" stroke="white" stroke-width="1.5"/>
@@ -343,8 +357,9 @@ const getIconForType = (type, device = null) => {
         <line x1="10" y1="13.5" x2="17" y2="13.5" stroke="white" stroke-width="0.75" stroke-linecap="round" opacity="0.8"/>
       </svg>
     `
+    const blinkClass = isMassLos ? 'odp-mass-los-blink' : ''
     return L.divIcon({
-      className: 'custom-node-icon',
+      className: `custom-node-icon ${blinkClass}`,
       html: svgContent,
       iconSize: [22, 22],
       iconAnchor: [11, 11]
@@ -353,13 +368,30 @@ const getIconForType = (type, device = null) => {
   
   if (type === 'CLIENT') {
     const health = getClientHealth(device)
-    bgColor = health === 'warning' ? '#f59e0b' : health === 'offline' ? '#dc2626' : '#16a34a'
-    const glowColor = health === 'warning' ? 'rgba(245, 158, 11, 0.45)' : health === 'offline' ? 'rgba(220, 38, 38, 0.45)' : 'rgba(22, 163, 74, 0.45)'
+    let bgColor = '#16a34a' // Green
+    let glowColor = 'rgba(22, 163, 74, 0.45)'
+    let svgIcon = `
+      <path d="M12 15h.01M9.5 12.5a3.5 3.5 0 0 1 5 0M7 10a7 7 0 0 1 10 0" stroke="white" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+    `
+    
+    if (health === 'warning') {
+      bgColor = '#f59e0b'
+      glowColor = 'rgba(245, 158, 11, 0.45)'
+    } else if (health === 'offline') {
+      bgColor = '#dc2626' // Red
+      glowColor = 'rgba(220, 38, 38, 0.45)'
+    } else if (health === 'power_failure') {
+      bgColor = '#dc2626' // Red (offline)
+      glowColor = 'rgba(220, 38, 38, 0.45)'
+      svgIcon = `
+        <path d="M10 14V17.5M14 14V17.5M8 10V12C8 13.1 8.9 14 10 14H14C15.1 14 16 13.1 16 12V10M12 17.5V20.5" stroke="white" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+      `
+    }
     
     svgContent = `
       <svg viewBox="0 0 24 24" width="20" height="20" fill="none" xmlns="http://www.w3.org/2000/svg" style="filter: drop-shadow(0px 2px 4px ${glowColor});">
         <circle cx="12" cy="12" r="10" fill="${bgColor}" stroke="white" stroke-width="1.5"/>
-        <path d="M12 15h.01M9.5 12.5a3.5 3.5 0 0 1 5 0M7 10a7 7 0 0 1 10 0" stroke="white" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"/>
+        ${svgIcon}
       </svg>
     `
     const blinkClass = health === 'offline' ? 'client-offline-blink' : ''
@@ -688,10 +720,6 @@ const informAllClients = async () => {
 }
 
 const startPlotClient = (client) => {
-  if (!canPlotClient(client)) {
-    informStatus.value = `${client.name} belum bisa diplot karena data identitas pelanggan belum lengkap.`
-    return
-  }
   if (!odpOptions.value.length) {
     informStatus.value = 'Belum ada ODP di peta. Tambahkan ODP dulu sebelum plotting pelanggan.'
     return
@@ -700,6 +728,13 @@ const startPlotClient = (client) => {
   selectedOdpId.value = odpOptions.value[0]?.id || ''
   isWorkflowOpen.value = false
   store.startPlotClient(client)
+}
+
+const openPlottedClient = (client) => {
+  isWorkflowOpen.value = false
+  if (map && hasCoords(client)) {
+    map.setView([Number(client.lat), Number(client.lng)], 20)
+  }
 }
 
 const startAddDevicePlacement = () => {
@@ -720,6 +755,14 @@ const savePlottedClient = async () => {
   if (!selectedOdpId.value) {
     plotError.value = 'Pilih ODP sebagai titik sambung pelanggan.'
     return
+  }
+
+  const odp = allDevicesData.value.find(d => d.id === selectedOdpId.value)
+  const connectedClients = allDevicesData.value.filter(d => d.parentId === selectedOdpId.value)
+  const maxCap = parseInt(odp?.capacity || odp?.portsCount || '8', 10)
+  if (connectedClients.length >= maxCap) {
+    const confirmPlot = confirm(`⚠️ Peringatan: ODP "${odp?.name || 'Terpilih'}" sudah penuh (${connectedClients.length}/${maxCap}). Menghubungkan pelanggan baru akan menyebabkan Over-subscription (cangkok paksa). Tetap lanjutkan?`)
+    if (!confirmPlot) return
   }
 
   const client = store.plottingClient
@@ -915,7 +958,7 @@ watch(unmappedClients, (clients) => {
             <span class="material-symbols-outlined">dynamic_feed</span>
             <div>
               <strong>Fiber Queue</strong>
-              <small>{{ unmappedClients.length }} pelanggan menunggu plotting</small>
+              <small>{{ unmappedClients.length }} Pending • {{ plottedClients.length }} Done</small>
             </div>
           </div>
           <button type="button" class="workflow-close" @click="isWorkflowOpen = false" aria-label="Tutup Fiber Queue">
@@ -930,73 +973,75 @@ watch(unmappedClients, (clients) => {
           <input v-model="workflowSearch" placeholder="Cari nama / IP / SN" />
         </label>
 
-        <!-- Filter Toggle Tipe Client -->
-        <div class="queue-filter-bar">
-          <button :class="{ active: queueFilter === 'ALL' }" @click="queueFilter = 'ALL'">Semua</button>
-          <button :class="{ active: queueFilter === 'PPPOE' }" @click="queueFilter = 'PPPOE'"
-            title="Client dengan koneksi PPPoE">
-            <span class="filter-dot pppoe"></span>PPPoE
+        <div class="queue-filter-bar is-plot-filter">
+          <button :class="{ active: queuePlotFilter === 'UNMAPPED' }" @click="queuePlotFilter = 'UNMAPPED'">
+            <span class="material-symbols-outlined">pending_actions</span>Pending
           </button>
-          <button :class="{ active: queueFilter === 'HOTSPOT' }" @click="queueFilter = 'HOTSPOT'"
-            title="Modem tanpa PPPoE (Hotspot/LAN)">
-            <span class="filter-dot hotspot"></span>Hotspot
+          <button :class="{ active: queuePlotFilter === 'PLOTTED' }" @click="queuePlotFilter = 'PLOTTED'">
+            <span class="material-symbols-outlined">where_to_vote</span>Done
           </button>
         </div>
 
-        <div v-if="!visibleUnmappedClients.length" class="workflow-empty">Tidak ada antrian plotting.</div>
-        <article v-for="client in visibleUnmappedClients" :key="client.id" class="workflow-client flex-col items-stretch gap-1">
-          <div class="flex items-center justify-between w-full">
-            <div class="workflow-client-main">
-              <span class="client-node-dot" :class="{ 'is-informed': isClientReadyForPlot(client) }"></span>
-              <div class="client-copy">
-                <strong>{{ client.name }}</strong>
-                <div class="flex items-center gap-1 mt-0.5">
-                  <span class="text-[9px] px-1 py-0.5 rounded font-bold uppercase tracking-wider leading-none"
-                    :class="isClientReadyForPlot(client) ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/20' : (isClientWaitingPersistedData(client) ? 'bg-sky-950/80 text-sky-300 border border-sky-500/20' : 'bg-amber-950/80 text-amber-400 border border-amber-500/20')">
-                    {{ isClientReadyForPlot(client) ? 'Ready Plot' : (isClientWaitingPersistedData(client) ? 'Sinkron Data' : 'Belum Inform') }}
-                  </span>
-                  <!-- Badge tipe koneksi -->
-                  <span class="client-type-badge" :class="client.clientType === 'HOTSPOT' ? 'hotspot' : 'pppoe'">
-                    {{ client.clientType === 'HOTSPOT' ? 'Hotspot' : 'PPPoE' }}
-                  </span>
-                  <span class="client-type-badge" :class="hasModemData(client) ? 'pppoe' : 'hotspot'">
-                    {{ hasModemData(client) ? 'ACS tersimpan' : 'ACS pending' }}
-                  </span>
-                  <span class="text-slate-400 text-[10px] truncate max-w-[90px]">
-                    {{ getClientDisplayIp(client) }}
-                  </span>
-                </div>
-              </div>
+        <div v-if="!visibleWorkflowClients.length" class="workflow-empty">Tidak ada client sesuai filter.</div>
+        <article
+          v-for="client in visibleWorkflowClients"
+          :key="client.id"
+          class="workflow-client"
+          :class="{ 'is-plotted': hasCoords(client), 'is-clickable': hasCoords(client) }"
+          @click="hasCoords(client) ? openPlottedClient(client) : null"
+          :title="hasCoords(client) ? 'Klik untuk menuju client di peta' : ''"
+        >
+          <!-- Baris 1: Nama & Aksi -->
+          <div class="workflow-client-header">
+            <div class="client-title-area">
+              <span class="material-symbols-outlined client-icon" :class="client.clientType === 'HOTSPOT' ? 'hotspot' : 'pppoe'">
+                {{ client.clientType === 'HOTSPOT' ? 'wifi' : 'settings_ethernet' }}
+              </span>
+              <strong class="client-name" :title="client.name">{{ client.name }}</strong>
             </div>
-            <div class="flex items-center gap-1">
+            
+            <div class="client-actions">
+              <!-- Tombol Sync (Jika belum siap / belum di-sync) -->
               <button 
                 v-if="!isClientReadyForPlot(client)"
                 type="button" 
-                class="workflow-sync-btn"
-                @click="informSingleClient(client)" 
+                class="btn-sync-icon"
+                @click.stop="informSingleClient(client)" 
                 :disabled="!getClientTriggerIp(client) || isClientSyncing(client) || isClientWaitingPersistedData(client)"
-                :title="isClientWaitingPersistedData(client) ? 'Menunggu data tersimpan ke client' : (isClientSyncing(client) ? 'Sedang sinkronisasi...' : 'Tarik data inform modem')"
+                :title="isClientWaitingPersistedData(client) ? 'Menunggu data tersimpan' : (isClientSyncing(client) ? 'Sedang sinkronisasi...' : 'Tarik data inform modem')"
               >
-                <span class="material-symbols-outlined text-sm" :class="{ spin: isClientSyncing(client) }">sensors</span>
+                <span class="material-symbols-outlined text-[13px]" :class="{ spin: isClientSyncing(client) }">sensors</span>
+                <span>Sync</span>
               </button>
-              <span v-else class="workflow-ready-pill" title="Data modem sudah tersimpan">
-                <span class="material-symbols-outlined">done</span>
-                Sudah Inform
-              </span>
+              
+              <!-- Tombol Plot (Jika siap/bisa di-plot) -->
               <button
-                v-if="canPlotClient(client)"
-                @click="startPlotClient(client)"
+                v-if="!hasCoords(client)"
+                class="btn-plot"
+                @click.stop="startPlotClient(client)"
                 :disabled="!odpOptions.length"
-                :title="isClientReadyForPlot(client) ? 'Plot pelanggan ke peta' : 'Plot dulu, data ACS akan menyusul otomatis'"
+                title="Plot pelanggan ke peta"
               >
-                <span class="material-symbols-outlined">location_on</span>
-                Plot
-              </button>
-              <button v-else type="button" disabled title="Lengkapi identitas pelanggan dulu">
-                <span class="material-symbols-outlined">lock</span>
-                Belum siap
+                <span class="material-symbols-outlined text-[13px]">location_on</span>
+                <span>Plot</span>
               </button>
             </div>
+          </div>
+
+          <!-- Baris 2: Detail IP & Tipe Koneksi -->
+          <div class="workflow-client-info">
+            <span class="info-ip">{{ getClientDisplayIp(client) || 'No IP' }}</span>
+            <span class="info-divider">•</span>
+            <span class="info-type" :class="client.clientType === 'HOTSPOT' ? 'hotspot' : 'pppoe'">
+              {{ client.clientType === 'HOTSPOT' ? 'Hotspot' : 'PPPoE' }}
+            </span>
+          </div>
+
+          <!-- Baris 3: Lencana Status -->
+          <div class="workflow-client-badges">
+            <span class="status-badge" :class="hasCoords(client) ? 'plotted' : 'unmapped'">
+              {{ hasCoords(client) ? 'Done' : 'Pending' }}
+            </span>
           </div>
 
           <!-- Progress Bar Sinkronisasi Modem -->
@@ -1006,7 +1051,7 @@ watch(unmappedClients, (clients) => {
               <span class="workflow-progress-text">{{ getSyncProgress(client).progress }}%</span>
             </div>
             <div class="workflow-progress-status">
-              <span class="material-symbols-outlined spin">sync</span>
+              <span class="material-symbols-outlined spin text-[10px]">sync</span>
               <span>{{ getSyncProgressMessage(getSyncProgress(client)) }}</span>
             </div>
           </div>
@@ -1193,8 +1238,12 @@ watch(unmappedClients, (clients) => {
   box-shadow: 0 0 0 5px rgba(245, 158, 11, 0.2), 0 4px 14px rgba(15, 23, 42, 0.28);
 }
 
-:deep(.network-marker.client-offline) {
+:deep(.client-offline-blink) {
   animation: client-blink 1.1s ease-in-out infinite;
+}
+
+:deep(.odp-mass-los-blink) {
+  animation: odp-blink 1.2s ease-in-out infinite;
 }
 
 @keyframes client-blink {
@@ -1208,12 +1257,23 @@ watch(unmappedClients, (clients) => {
   }
 }
 
+@keyframes odp-blink {
+  0%, 100% {
+    filter: drop-shadow(0px 3px 8px rgba(220, 38, 38, 0.9));
+    transform: scale(1);
+  }
+  50% {
+    filter: drop-shadow(0px 0px 0px rgba(220, 38, 38, 0));
+    transform: scale(1.12);
+  }
+}
+
 .workflow-modal-backdrop {
   position: fixed;
   top: 80px;
   left: 24px;
   bottom: 24px;
-  width: 340px;
+  width: 640px;
   max-width: calc(100vw - 48px);
   z-index: 1000;
   display: flex;
@@ -1225,13 +1285,10 @@ watch(unmappedClients, (clients) => {
   height: fit-content;
   max-height: 100%;
   overflow-y: auto;
-  border: 1px solid rgba(125, 211, 252, 0.18);
+  border: 1px solid rgba(148, 163, 184, 0.15);
   border-radius: 16px;
-  background:
-    linear-gradient(135deg, rgba(8, 18, 32, 0.85), rgba(4, 12, 24, 0.75)),
-    radial-gradient(circle at 8% 0%, rgba(59, 130, 246, 0.22), transparent 38%);
-  box-shadow: 0 10px 40px rgba(2, 6, 23, 0.42);
-  backdrop-filter: blur(18px) saturate(1.18);
+  background: #0f172a; /* Slate 900 solid, no background bleed-through */
+  box-shadow: 0 10px 40px rgba(2, 6, 23, 0.55);
   pointer-events: auto;
   display: flex;
   flex-direction: column;
@@ -1316,9 +1373,9 @@ watch(unmappedClients, (clients) => {
 
 .workflow-body {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   max-height: calc(min(82vh, 720px) - 68px);
-  gap: 9px;
+  gap: 8px;
   overflow-y: auto;
   padding: 12px;
 }
@@ -1347,7 +1404,7 @@ watch(unmappedClients, (clients) => {
   color: #94a3b8;
 }
 
-/* Filter bar antrian - toggle PPPoE / Hotspot */
+/* Filter bar antrian - status plotting */
 .queue-filter-bar {
   display: flex;
   gap: 4px;
@@ -1382,6 +1439,10 @@ watch(unmappedClients, (clients) => {
 .queue-filter-bar button:hover:not(.active) {
   background: rgba(255, 255, 255, 0.05);
   color: #cbd5e1;
+}
+
+.queue-filter-bar.is-plot-filter .material-symbols-outlined {
+  font-size: 13px;
 }
 
 .filter-dot {
@@ -1452,61 +1513,204 @@ watch(unmappedClients, (clients) => {
 }
 
 .workflow-client {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(108px, 0.55fr) minmax(168px, 0.8fr);
+  align-items: center;
   gap: 8px;
-  border: 1px solid rgba(148, 163, 184, 0.14);
+  border: 1px solid rgba(148, 163, 184, 0.12);
   border-radius: 10px;
-  background: rgba(8, 19, 34, 0.6);
-  padding: 10px;
+  background: rgba(30, 41, 59, 0.45);
+  padding: 9px 10px;
+  transition: border-color 0.2s, background-color 0.2s;
 }
 
-.workflow-sync-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border: 1px solid rgba(59, 130, 246, 0.3) !important;
-  border-radius: 8px;
-  background: rgba(59, 130, 246, 0.1) !important;
-  color: #60a5fa !important;
+.workflow-client.is-plotted {
+  border-color: rgba(16, 185, 129, 0.16);
+  background: rgba(15, 35, 38, 0.42);
+}
+
+.workflow-client.is-clickable {
   cursor: pointer;
-  transition: all 0.2s ease;
 }
 
-.workflow-sync-btn:hover:not(:disabled) {
-  background: rgba(59, 130, 246, 0.25) !important;
-  color: #fff !important;
-  border-color: rgba(59, 130, 246, 0.5) !important;
+.workflow-client.is-clickable:hover {
+  border-color: rgba(16, 185, 129, 0.34);
+  background: rgba(15, 35, 38, 0.58);
 }
 
-.workflow-sync-btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
+.workflow-client:hover {
+  border-color: rgba(96, 165, 250, 0.25);
+  background: rgba(30, 41, 59, 0.65);
 }
 
-.workflow-ready-pill {
-  display: inline-flex;
+.workflow-client-header {
+  grid-column: 1;
+  display: flex;
   align-items: center;
-  gap: 4px;
-  min-height: 26px;
-  padding: 0 8px;
-  border: 1px solid rgba(16, 185, 129, 0.26);
-  border-radius: 8px;
-  background: rgba(6, 78, 59, 0.22);
-  color: #6ee7b7;
-  font-size: 10px;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+}
+
+.client-title-area {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+}
+
+.client-icon {
+  font-size: 16px;
+  flex-shrink: 0;
+}
+.client-icon.pppoe {
+  color: #60a5fa;
+}
+.client-icon.hotspot {
+  color: #fb923c;
+}
+
+.client-name {
+  color: #f8fafc;
+  font-size: 12px;
   font-weight: 800;
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.workflow-ready-pill .material-symbols-outlined {
-  font-size: 14px;
+.client-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.btn-sync-icon,
+.btn-plot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px !important;
+  height: 24px;
+  padding: 0 10px !important;
+  border-radius: 6px !important;
+  font-size: 10px !important;
+  font-weight: 800 !important;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.btn-sync-icon {
+  border: 1px solid rgba(59, 130, 246, 0.3) !important;
+  background: rgba(59, 130, 246, 0.1) !important;
+  color: #60a5fa !important;
+}
+.btn-sync-icon:hover:not(:disabled) {
+  background: rgba(59, 130, 246, 0.25) !important;
+  color: #ffffff !important;
+}
+
+.btn-plot {
+  background: #2563eb !important;
+  color: #ffffff !important;
+  border: 0 !important;
+}
+.btn-plot:hover:not(:disabled) {
+  background: #1d4ed8 !important;
+}
+
+.workflow-client-info {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  color: #94a3b8;
+  font-size: 10px;
+  font-weight: 600;
+  min-width: 0;
+}
+
+.info-ip {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.info-divider {
+  opacity: 0.4;
+}
+.info-type {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.info-type.pppoe {
+  color: #93c5fd;
+}
+.info-type.hotspot {
+  color: #fdba74;
+}
+
+.workflow-client-badges {
+  grid-column: 3;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.status-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.status-badge.ready {
+  background: rgba(16, 185, 129, 0.12);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.2);
+}
+.status-badge.syncing {
+  background: rgba(14, 165, 233, 0.12);
+  color: #38bdf8;
+  border: 1px solid rgba(14, 165, 233, 0.2);
+}
+.status-badge.waiting {
+  background: rgba(245, 158, 11, 0.12);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.2);
+}
+
+.status-badge.saved {
+  background: rgba(99, 102, 241, 0.12);
+  color: #818cf8;
+  border: 1px solid rgba(99, 102, 241, 0.2);
+}
+.status-badge.pending {
+  background: rgba(148, 163, 184, 0.1);
+  color: #94a3b8;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+}
+
+.status-badge.plotted {
+  background: rgba(16, 185, 129, 0.12);
+  color: #6ee7b7;
+  border: 1px solid rgba(16, 185, 129, 0.22);
+}
+
+.status-badge.unmapped {
+  background: rgba(245, 158, 11, 0.1);
+  color: #fcd34d;
+  border: 1px solid rgba(245, 158, 11, 0.18);
 }
 
 .workflow-progress-container {
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -1552,77 +1756,6 @@ watch(unmappedClients, (clients) => {
 
 .workflow-progress-status .material-symbols-outlined {
   font-size: 11px;
-}
-
-.workflow-client-main {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 9px;
-}
-
-.client-node-dot {
-  width: 10px;
-  height: 10px;
-  flex: 0 0 auto;
-  border-radius: 999px;
-  background: #f59e0b;
-  box-shadow: 0 0 0 4px rgba(245, 158, 11, 0.12);
-}
-
-.client-node-dot.is-informed {
-  width: 8px;
-  height: 8px;
-  background: #34d399;
-  box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.12);
-}
-
-.client-copy {
-  min-width: 0;
-}
-
-.client-copy strong,
-.client-copy span,
-.client-copy small {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.client-copy strong {
-  color: #f8fafc;
-  font-size: 12px;
-  font-weight: 900;
-}
-
-.client-copy span {
-  color: #94a3b8;
-  font-size: 11px;
-  font-weight: 700;
-}
-
-.workflow-client button {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 0;
-  border-radius: 8px;
-  background: #2563eb;
-  color: #fff;
-  padding: 7px 8px;
-  font-size: 11px;
-  font-weight: 900;
-  cursor: pointer;
-}
-
-.workflow-client button:disabled {
-  cursor: not-allowed;
-  opacity: 0.45;
-}
-
-.workflow-client button .material-symbols-outlined {
-  font-size: 16px;
 }
 
 .workflow-informed {
@@ -1837,6 +1970,21 @@ watch(unmappedClients, (clients) => {
   .workflow-body {
     grid-template-columns: 1fr;
     max-height: calc(100vh - 92px);
+  }
+
+  .workflow-client {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-client-header,
+  .workflow-client-info,
+  .workflow-client-badges,
+  .workflow-progress-container {
+    grid-column: 1;
+  }
+
+  .workflow-client-badges {
+    justify-content: flex-start;
   }
 
   .plot-confirm {

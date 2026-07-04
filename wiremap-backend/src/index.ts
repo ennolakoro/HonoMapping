@@ -536,6 +536,8 @@ const cwmpHandler = async (c: any) => {
     // 1. Terima event Inform dari Modem
     const informData = parseInform(bodyText)
     console.log(`Mini ACS Menerima Inform dari Modem [${clientIp}]:`, informData)
+
+    const isDyingGasp = bodyText.includes('Dying Gasp') || bodyText.includes('DyingGasp')
     
     // Tentukan sessionKey unik menggunakan SerialNumber agar tidak bertabrakan di IP Publik yang sama
     if (informData.SerialNumber) {
@@ -597,7 +599,8 @@ const cwmpHandler = async (c: any) => {
       }
 
       const updatePayload: Record<string, any> = {
-        isOnline: true,
+        isOnline: !isDyingGasp,
+        offlineReason: isDyingGasp ? 'POWER_FAILURE' : null,
         snModem: informData.SerialNumber,
         brand: informData.manufacturer || undefined,
         modelName: informData.modelName || undefined,
@@ -607,7 +610,6 @@ const cwmpHandler = async (c: any) => {
       }
 
       // Lindungi wanIp / lanIp agar tidak ter-NAT menjadi IP Publik yang sama.
-      // IP request lokal adalah IP manajemen CPE, bukan WAN PPPoE publik.
       if (currentClientIp) {
         updatePayload.lanIp = currentClientIp
       }
@@ -615,7 +617,7 @@ const cwmpHandler = async (c: any) => {
       if (existing[0]) {
         clientId = existing[0].id
         clientName = existing[0].name
-        // Update status online & basic info
+        // Update status online/offline & basic info
         await db.update(clients)
           .set(stripUndefined(updatePayload))
           .where(eq(clients.id, clientId))
@@ -627,7 +629,8 @@ const cwmpHandler = async (c: any) => {
           snModem: informData.SerialNumber,
           wanIp: null,
           lanIp: currentClientIp || null,
-          isOnline: true,
+          isOnline: !isDyingGasp,
+          offlineReason: isDyingGasp ? 'POWER_FAILURE' : null,
           brand: informData.manufacturer || null,
           modelName: informData.modelName || null,
           hardwareVersion: informData.hardwareVersion || null,
@@ -640,6 +643,31 @@ const cwmpHandler = async (c: any) => {
         clientId = inserted[0].id
         console.log(`[MiniACS] Auto-created client record for unknown Serial Number: ${informData.SerialNumber}`)
       }
+    }
+
+    if (isDyingGasp) {
+      console.log(`[CWMP] Sesi diakhiri secara instan karena menerima Dying Gasp (Mati Listrik) dari ${clientName}`)
+      cwmpSessions.delete(sessionKey)
+      
+      const progressKeys = getProgressKeysForClient(clientId, [clientIp, currentClientIp])
+      const prog = getFirstProgress(progressKeys)
+      if (prog) {
+        setProgressForKeys(progressKeys, {
+          ...prog,
+          progress: 100,
+          status: 'failed',
+          error: 'Modem mati daya (Dying Gasp)',
+          updatedAt: Date.now()
+        })
+      }
+
+      const responseXml = createInformResponse(informData.cwmpId || '', informData.cwmpNamespace || 'urn:dslforum-org:cwmp-1-0')
+      return new Response(responseXml, {
+        headers: {
+          'Content-Type': 'text/xml',
+          'Server': 'Hono-MiniACS'
+        }
+      })
     }
 
     if (session) {
@@ -1199,6 +1227,7 @@ app.get('/api/protected/devices', async (c) => {
         temperature: client.temperature,
         voltage: client.voltage,
         isOnline: client.isOnline,
+        offlineReason: client.offlineReason,
         cablePath: client.cablePath
       }
     })
@@ -1392,6 +1421,11 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
 
     console.log(`[DHCP Sync] Total DHCP lease aktif dari router: ${leases.length}`)
 
+    // Setel semua client Hotspot menjadi offline terlebih dahulu sebelum meng-update yang aktif
+    await db.update(clients)
+      .set({ isOnline: false })
+      .where(eq(clients.clientType, 'HOTSPOT'))
+
     let created = 0, updated = 0, skipped = 0
 
     for (const lease of leases) {
@@ -1549,6 +1583,12 @@ app.post('/api/protected/sync-real-mikrotik', async (c) => {
     }
 
     const activeClients = await getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+    
+    // Setel semua client PPPoE menjadi offline terlebih dahulu sebelum meng-update yang aktif
+    await db.update(clients)
+      .set({ isOnline: false })
+      .where(eq(clients.clientType, 'PPPOE'))
+
     if (!activeClients || activeClients.length === 0) {
       return c.json({ error: 'Tidak ada client PPPoE aktif yang ditemukan di Mikrotik.' }, 404)
     }
