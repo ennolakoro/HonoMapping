@@ -302,7 +302,7 @@ const handleOpenConfig = () => {
 
 const waitForConfigApply = async (targetIp, clientId) => {
   const statusKeys = [targetIp, String(clientId)].filter(Boolean)
-  const timeoutAt = Date.now() + 60000
+  const timeoutAt = Date.now() + 120000
 
   while (Date.now() < timeoutAt) {
     await new Promise(resolve => setTimeout(resolve, 2500))
@@ -310,7 +310,7 @@ const waitForConfigApply = async (targetIp, clientId) => {
     const status = statusKeys.map(key => statusMap[key]).find(Boolean)
 
     if (!status) {
-      configMessage.value = 'Menunggu modem target mengirim Inform...'
+      configMessage.value = 'Menunggu modem target mengirim Inform setelah Connection Request...'
       configProgress.value = Math.max(configProgress.value, 15)
       configState.value = 'waiting'
       continue
@@ -337,7 +337,7 @@ const waitForConfigApply = async (targetIp, clientId) => {
     else configMessage.value = 'Menghubungi modem target...'
   }
 
-  throw new Error('Timeout menunggu modem target mengonfirmasi perubahan.')
+  throw new Error('Timeout menunggu modem target mengonfirmasi perubahan. Cek akses IP management dari Mikrotik/bridge.')
 }
 
 const handlePushConfig = async () => {

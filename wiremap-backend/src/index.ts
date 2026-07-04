@@ -382,20 +382,23 @@ const cleanExpiredSessions = () => {
     }
   }
   for (const [ip, progress] of syncProgress.entries()) {
+    const isConfigPush = Boolean(progress.id && pendingConfigs.has(progress.id))
     let timeout = ACTIVE_SYNC_TIMEOUT_MS
     if (progress.status === 'success' || progress.status === 'failed') {
       timeout = FINISHED_SYNC_RETENTION_MS
     } else if (progress.status === 'triggered') {
-      timeout = 15000 // 15 detik timeout jika baru di-trigger dan belum masuk inform!
+      timeout = isConfigPush ? ACTIVE_SYNC_TIMEOUT_MS : 15000
     } else if (progress.status === 'connected' || progress.status === 'fetching') {
-      timeout = 30000 // 30 detik timeout jika sedang proses XML
+      timeout = isConfigPush ? ACTIVE_SYNC_TIMEOUT_MS : 30000
     }
 
     if (now - progress.updatedAt > timeout) {
       if (progress.status === 'triggered' || progress.status === 'connected' || progress.status === 'fetching') {
         console.warn(`[SYNC] Timeout menunggu Inform untuk ${ip} (${progress.username}) status=${progress.status}`)
         let errorMsg = 'Timeout menunggu modem mengirim Inform. Pastikan CPE online.'
-        if (progress.status === 'triggered') {
+        if (isConfigPush) {
+          errorMsg = 'Timeout menunggu modem target mengirim Inform untuk menerapkan konfigurasi. Pastikan IP management modem bisa diakses dari Mikrotik/bridge dan ConnectionRequestURL benar.'
+        } else if (progress.status === 'triggered') {
           errorMsg = 'Modem tidak merespon colek (Connection Request) dalam 15 detik. Pastikan IP management dapat di-ping dari Mikrotik.'
         }
         syncProgress.set(ip, {
