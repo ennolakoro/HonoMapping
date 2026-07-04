@@ -133,10 +133,56 @@ export function parseGetParameterValuesResponse(xmlString: string) {
   }
   const lanStatus = lanPorts.length > 0 ? lanPorts.join(', ') : null;
 
+export function parseGetParameterValuesResponse(xmlString: string) {
+  const getParameterValue = (xml: string, paramName: string) => {
+    // Regex mencari blok Name-Value di ParameterValueStruct, mengabaikan namespace/prefix
+    const regex = new RegExp(`<Name>${paramName.replace(/\./g, '\\.')}</Name>\\s*<Value[^>]*>(.*?)</Value>`);
+    const match = xml.match(regex);
+    return match ? match[1] : null;
+  };
+
+  // LAN Ports Status Summary (LAN 1 - LAN 4)
+  const lanPorts: string[] = [];
+  for (let i = 1; i <= 4; i++) {
+    const status = getParameterValue(xmlString, `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${i}.Status`);
+    const speed = getParameterValue(xmlString, `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${i}.MaxBitRate`);
+    if (status) {
+      const speedStr = speed && speed !== '0' && speed !== '-1' ? `${speed}Mbps` : '';
+      lanPorts.push(`LAN${i}:${status}${speedStr ? `(${speedStr})` : ''}`);
+    }
+  }
+  const lanStatus = lanPorts.length > 0 ? lanPorts.join(', ') : null;
+
   // Associated Devices Sum (WLAN 2.4G + 5G)
   const assoc24 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations') || '0', 10);
   const assoc50 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations') || '0', 10);
   const totalAssoc = (isNaN(assoc24) ? 0 : assoc24) + (isNaN(assoc50) ? 0 : assoc50);
+
+  // Ekstrak Hosts (Daftar perangkat yang terhubung ke LAN/WLAN)
+  const connectedHosts: any[] = [];
+  const hostRegex = /<Name>InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)<\/Name>\s*<Value[^>]*>(.*?)<\/Value>/g;
+  let matchRegex;
+  const hostsMap: Record<string, any> = {};
+  
+  while ((matchRegex = hostRegex.exec(xmlString)) !== null) {
+    const hostIndex = matchRegex[1];
+    const paramKey = matchRegex[2];
+    const paramValue = matchRegex[3];
+    
+    if (!hostsMap[hostIndex]) hostsMap[hostIndex] = {};
+    hostsMap[hostIndex][paramKey] = paramValue;
+  }
+  
+  for (const key in hostsMap) {
+    if (hostsMap[key].MACAddress) {
+      connectedHosts.push({
+        ip: hostsMap[key].IPAddress || '',
+        mac: hostsMap[key].MACAddress,
+        hostname: hostsMap[key].HostName || 'Unknown Device',
+        active: hostsMap[key].Active === '1' || hostsMap[key].Active === 'true'
+      });
+    }
+  }
 
   return {
     ssid: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'),
@@ -147,6 +193,7 @@ export function parseGetParameterValuesResponse(xmlString: string) {
                 getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey'),
     lanStatus,
     associatedDevices: totalAssoc,
+    connectedHosts,
     brand: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.Manufacturer'),
     modelName: getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.ModelName') ||
                getParameterValue(xmlString, 'InternetGatewayDevice.DeviceInfo.ProductClass'),
@@ -183,4 +230,31 @@ export function parseGetParameterValuesResponse(xmlString: string) {
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage')
   };
+}
+
+export function createSetParameterValues(
+  cwmpId: string = '99997', 
+  cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0', 
+  params: { name: string; value: string; type: string }[] = []
+) {
+  const paramsXml = params.map(p => `
+        <ParameterValueStruct>
+          <Name>${p.name}</Name>
+          <Value xsi:type="xsd:${p.type}">${p.value}</Value>
+        </ParameterValueStruct>`).join('');
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cwmp="${cwmpNamespace}" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema">
+  <soap-env:Header>
+    <cwmp:ID soap-env:mustUnderstand="1">${cwmpId}</cwmp:ID>
+  </soap-env:Header>
+  <soap-env:Body>
+    <cwmp:SetParameterValues>
+      <ParameterList soap-env:arrayType="cwmp:ParameterValueStruct[${params.length}]">
+${paramsXml}
+      </ParameterList>
+      <ParameterKey>ConfigUpdate</ParameterKey>
+    </cwmp:SetParameterValues>
+  </soap-env:Body>
+</soap-env:Envelope>`;
 }

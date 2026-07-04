@@ -275,6 +275,16 @@ interface CwmpSession {
 
 const cwmpSessions = new Map<string, CwmpSession>();
 
+interface PendingConfig {
+  clientId: number;
+  modemIp: string;
+  params: { name: string; value: string; type: string }[];
+  status: 'pending' | 'success' | 'failed';
+  error?: string;
+  updatedAt: number;
+}
+const pendingConfigs = new Map<number, PendingConfig>();
+
 interface SyncProgress {
   id: number | null;
   username: string;
@@ -511,6 +521,7 @@ const cwmpHandler = async (c: any) => {
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
+        'InternetGatewayDevice.LANDevice.1.Hosts.Host.', // Ambil seluruh daftar Host
       ]
 
       if (isHuawei) {
@@ -632,12 +643,44 @@ const cwmpHandler = async (c: any) => {
   if (session) {
     // Jika modem mengirim body kosong dan kita sedang menunggunya
     if (bodyText.trim() === '' && session.waitingForEmptyPost) {
-      console.log(`Menerima Empty POST dari ${clientIp}, mengirim GetParameterValues dengan ID: ${session.currentCwmpId}...`)
-      
+      const clientId = session.currentTriggeredClientId;
+      const pendingConfig = clientId ? pendingConfigs.get(clientId) : null;
+
       session.waitingForEmptyPost = false;
       session.updatedAt = Date.now()
       cwmpSessions.set(clientIp, session)
 
+      if (pendingConfig && pendingConfig.status === 'pending') {
+        console.log(`Menerima Empty POST dari ${clientIp}, mengirim SetParameterValues dengan ID: ${session.currentCwmpId}...`)
+        
+        pendingConfig.status = 'success';
+        pendingConfigs.set(clientId, pendingConfig);
+
+        // Update progress tracker
+        const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+        const prog = getFirstProgress(progressKeys)
+        if (prog) {
+          setProgressForKeys(progressKeys, {
+            ...prog,
+            progress: 60,
+            status: 'fetching',
+            updatedAt: Date.now()
+          })
+        }
+
+        const { createSetParameterValues } = require('./cwmp');
+        const responseXml = createSetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, pendingConfig.params);
+        return new Response(responseXml, {
+          headers: {
+            'Content-Type': 'text/xml',
+            'Server': 'Hono-MiniACS',
+            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+          }
+        })
+      }
+
+      console.log(`Menerima Empty POST dari ${clientIp}, mengirim GetParameterValues dengan ID: ${session.currentCwmpId}...`)
+      
       // Update progress tracker
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
@@ -650,6 +693,32 @@ const cwmpHandler = async (c: any) => {
         })
       }
 
+      const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
+      return new Response(responseXml, {
+        headers: {
+          'Content-Type': 'text/xml',
+          'Server': 'Hono-MiniACS',
+          'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+        }
+      })
+    }
+    
+    if (bodyText.includes('SetParameterValuesResponse')) {
+      console.log(`[CWMP] Berhasil mengaplikasikan SetParameterValues ke modem ${clientIp}`);
+      
+      // Update progress tracker
+      const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+      const prog = getFirstProgress(progressKeys)
+      if (prog) {
+        setProgressForKeys(progressKeys, {
+          ...prog,
+          progress: 80,
+          status: 'fetching',
+          updatedAt: Date.now()
+        })
+      }
+
+      // Setelah SET, kita GET parameter lagi untuk memastikan data terbaru tersimpan di DB
       const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
       return new Response(responseXml, {
         headers: {
@@ -676,6 +745,7 @@ const cwmpHandler = async (c: any) => {
             wifiPassword5g: params.password5g ?? undefined,
             lanStatus: params.lanStatus ?? undefined,
             associatedDevices: params.associatedDevices ?? undefined,
+            connectedHosts: params.connectedHosts ? JSON.stringify(params.connectedHosts) : undefined,
             brand: params.brand ?? session.currentManufacturer ?? undefined,
             modelName: params.modelName ?? session.currentModelName ?? undefined,
             hardwareVersion: params.hardwareVersion ?? session.currentHardwareVersion ?? undefined,
@@ -837,6 +907,41 @@ app.get('/api/protected/modem/sync-status', async (c) => {
   return c.json(data)
 })
 
+// Endpoint untuk Push Konfigurasi Modem (TR-069 Config)
+app.post('/api/protected/modem/:ip/config', async (c) => {
+  const modemIp = c.req.param('ip')
+  const db = getDb(c.env)
+  const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
+  
+  try {
+    const body = await c.req.json()
+    const { deviceId, params } = body // params: { name: string; value: string; type: string }[]
+    const pseudoDeviceId = deviceId ? parseInt(deviceId, 10) : null
+    const clientId = pseudoDeviceId && pseudoDeviceId >= 1000000 ? pseudoDeviceId - 1000000 : null
+
+    if (!clientId || !params || !Array.isArray(params)) {
+      return c.json({ error: 'Invalid parameters' }, 400)
+    }
+
+    pendingConfigs.set(clientId, {
+      clientId,
+      modemIp,
+      params,
+      status: 'pending',
+      updatedAt: Date.now()
+    })
+
+    console.log(`[CONFIG] Menyimpan konfigurasi tertunda untuk modemIp=${modemIp} clientId=${clientId}`)
+
+    // Sama seperti sync, kita trigger modem agar segera Inform
+    await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
+    
+    return c.json({ success: true, message: `Konfigurasi disimpan. Modem ${modemIp} di-trigger untuk menarik konfigurasi.` })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal memproses konfigurasi', details: err.message }, 500)
+  }
+})
+
 // Endpoint untuk Vue 3 (Memicu Modem secara Real-time)
 app.post('/api/protected/modem/:ip/sync', async (c) => {
   const modemIp = c.req.param('ip')
@@ -930,6 +1035,7 @@ app.get('/api/protected/devices', async (c) => {
         wifiPassword5g: client.wifiPassword5g,
         lanStatus: client.lanStatus,
         associatedDevices: client.associatedDevices,
+        connectedHosts: client.connectedHosts ? JSON.parse(client.connectedHosts) : [],
         brand: client.brand || inferredModem.brand || null,
         modelName: client.modelName || inferredModem.modelName || null,
         hardwareVersion: client.hardwareVersion,

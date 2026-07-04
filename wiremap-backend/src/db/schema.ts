@@ -67,6 +67,7 @@ export const clients = sqliteTable("clients", {
   wifiPassword5g: text("wifi_password_5g"),
   lanStatus: text("lan_status"),
   associatedDevices: integer("associated_devices"),
+  connectedHosts: text("connected_hosts"),
   brand: text("brand"),
   modelName: text("model_name"),
   hardwareVersion: text("hardware_version"),
