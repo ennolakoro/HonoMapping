@@ -148,21 +148,42 @@ app.get('/ppp-secrets', async (req, res) => {
 
 // Endpoint untuk trigger modem CWMP (Mini ACS)
 app.post('/trigger-modem', async (req, res) => {
-    const { ip } = req.body;
+    const { ip, connectionRequestUrl, cwmpUser, cwmpPass } = req.body;
     if (!ip) return res.status(400).json({ error: 'IP Modem tidak diberikan' });
 
     const { host, port } = getMikrotikHostInfo();
-    const user = process.env.MIKROTIK_USER;
-    const password = process.env.MIKROTIK_PASS;
 
     res.status(202).json({ success: true, queued: true, message: `Trigger modem ${ip} masuk antrian bridge` });
 
     setImmediate(async () => {
+        // --- Metode 1: Direct HTTP ke Connection Request URL modem ---
+        // Ini lebih reliable karena tidak perlu lewat Mikrotik
+        const crUrl = connectionRequestUrl || `http://${ip}:7547/`;
+        const modemUser = cwmpUser || process.env.MODEM_CWMP_USER || 'admin';
+        const modemPass = cwmpPass || process.env.MODEM_CWMP_PASS || 'admin';
+
+        console.log(`[TRIGGER] Mencoba direct HTTP ke ${crUrl} ...`);
+        const credentials = Buffer.from(`${modemUser}:${modemPass}`).toString('base64');
+        try {
+            const directRes = await Promise.race([
+                fetch(crUrl, {
+                    method: 'GET',
+                    headers: { 'Authorization': `Basic ${credentials}` }
+                }),
+                new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 10000))
+            ]);
+            console.log(`[TRIGGER] Direct HTTP ke ${crUrl} berhasil, status: ${directRes.status}`);
+            return; // Berhasil, tidak perlu Mikrotik
+        } catch (err) {
+            console.warn(`[TRIGGER] Direct HTTP gagal (${err.message}), mencoba via Mikrotik /tool/fetch...`);
+        }
+
+        // --- Metode 2: Via Mikrotik /tool/fetch (RouterOS v6 kompatibel) ---
         const api = createRouterClient();
         api.on('error', (err) => console.log('RouterOS Error:', err.message));
 
         try {
-            console.log(`Men-trigger modem ${ip} via Mikrotik API background...`);
+            console.log(`[TRIGGER] Men-trigger modem ${ip} via Mikrotik API background...`);
             const client = await withTimeout(
                 api.connect(),
                 35000,
@@ -170,15 +191,14 @@ app.post('/trigger-modem', async (req, res) => {
             );
 
             const modemUrl = `http://${ip}:7547/`;
-            const modemUser = process.env.MODEM_CWMP_USER || 'admin';
-            const modemPass = process.env.MODEM_CWMP_PASS || 'admin';
 
+            // RouterOS v6: gunakan 'output' bukan 'keep-result'
             await withTimeout(
                 client.menu('/tool/fetch').exec({
                     url: modemUrl,
                     user: modemUser,
                     password: modemPass,
-                    "keep-result": "no"
+                    output: 'none'
                 }),
                 12000,
                 `Timeout /tool fetch ke ${ip}:7547`

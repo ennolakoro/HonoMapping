@@ -86,6 +86,8 @@ export const clients = sqliteTable("clients", {
   clientType: text("client_type").default('PPPOE'),
   // IP LAN dari DHCP lease (untuk modem HOTSPOT)
   lanIp: text("lan_ip"),
+  // URL Connection Request CWMP dari Inform modem (untuk direct HTTP trigger)
+  connectionRequestUrl: text("connection_request_url"),
 });
 
 export const settings = sqliteTable("settings", {

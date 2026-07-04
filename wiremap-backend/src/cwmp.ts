@@ -143,6 +143,11 @@ export function parseGetParameterValuesResponse(xmlString: string) {
   const hostRegex = /<Name>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
   let matchRegex;
   const hostsMap: Record<string, any> = {};
+
+  console.log('[DEBUG CWMP] Mencari string Hosts.Host di XML:', xmlString.includes('InternetGatewayDevice.LANDevice.1.Hosts.Host.'));
+  if (xmlString.includes('InternetGatewayDevice.LANDevice.1.Hosts.Host.')) {
+    console.log('[DEBUG CWMP] Snippet XML Host:', xmlString.substring(xmlString.indexOf('InternetGatewayDevice.LANDevice.1.Hosts.Host.') - 50, xmlString.indexOf('InternetGatewayDevice.LANDevice.1.Hosts.Host.') + 300));
+  }
   
   while ((matchRegex = hostRegex.exec(xmlString)) !== null) {
     const hostIndex = matchRegex[1];
@@ -163,6 +168,8 @@ export function parseGetParameterValuesResponse(xmlString: string) {
       });
     }
   }
+
+  console.log('[DEBUG CWMP] Hasil parsing hosts:', connectedHosts);
 
   return {
     ssid: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'),

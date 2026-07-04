@@ -133,8 +133,16 @@ export async function getDhcpLeases(
 /**
  * Workaround: Menyuruh Mikrotik "mencolek" modem via /tool fetch
  * agar modem langsung mengirimkan request Inform ke Mini ACS kita.
+ * Sekarang mendukung direct HTTP ke connectionRequestUrl sebagai Metode 1.
  */
-export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: string, modemIp: string, bridgeUrl?: string) {
+export async function triggerModemCWMP(
+  mikrotikIp: string,
+  user: string,
+  pass: string,
+  modemIp: string,
+  bridgeUrl?: string,
+  connectionRequestUrl?: string | null
+) {
   // Karena Mikrotik V6, kita arahkan ke jembatan yang ditentukan atau default ke 3005
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/trigger-modem`;
   
@@ -145,7 +153,10 @@ export async function triggerModemCWMP(mikrotikIp: string, user: string, pass: s
     const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip: modemIp }),
+      body: JSON.stringify({
+        ip: modemIp,
+        connectionRequestUrl: connectionRequestUrl || null,
+      }),
       signal: controller.signal
     });
     

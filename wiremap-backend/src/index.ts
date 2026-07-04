@@ -456,6 +456,7 @@ const cwmpHandler = async (c: any) => {
         modelName: informData.modelName || undefined,
         hardwareVersion: informData.hardwareVersion || undefined,
         softwareVersion: informData.softwareVersion || undefined,
+        connectionRequestUrl: informData.connectionRequestUrl || undefined,
       }
 
       // Lindungi wanIp / lanIp agar tidak ter-NAT menjadi IP Publik yang sama.
@@ -962,13 +963,15 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
     const clientId = pseudoDeviceId && pseudoDeviceId >= 1000000 ? pseudoDeviceId - 1000000 : null
 
     let clientName = `ONT-${modemIp}`
+    let connectionRequestUrl: string | null = null
     if (clientId) {
       const client = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
       if (client[0]) {
         clientName = client[0].name
+        connectionRequestUrl = client[0].connectionRequestUrl || null
       }
     }
-    console.log(`[SYNC] Target client=${clientName} id=${clientId || 'N/A'} ip=${modemIp}`)
+    console.log(`[SYNC] Target client=${clientName} id=${clientId || 'N/A'} ip=${modemIp} crUrl=${connectionRequestUrl || 'N/A'}`)
 
     // Set progress awal (10%)
     syncProgress.set(modemIp, {
@@ -981,7 +984,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
 
     // Menyuruh Mikrotik "mencolek" modem. Bridge lama bisa timeout 10 detik,
     // tetapi Inform dari ONT masih bisa masuk setelah request ini selesai.
-    const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
+    const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
     console.log(`[SYNC] Trigger ${triggered ? 'terkirim' : 'ditunggu/queued'} untuk ${clientName} (${modemIp})`)
     return c.json({
       message: triggered
