@@ -876,6 +876,7 @@ const cwmpHandler = async (c: any) => {
     
     if (bodyText.includes('GetParameterNamesResponse')) {
       if (session.stage === 'host_names') {
+        console.log(`[DEBUG CWMP] Raw GetParameterNamesResponse XML dari [${clientIp}]:\n`, bodyText)
         const hostParams = parseGetParameterNamesResponse(bodyText)
         console.log(`Mini ACS Menerima Host Parameter Names dari [${clientIp}] (Stage 2):`, hostParams.length, 'parameters')
         
