@@ -294,6 +294,7 @@ const saveAndExitEditPath = async () => {
         cablePath: JSON.stringify(finalCoords)
       })
       activeEditDevice.value.cablePath = JSON.stringify(finalCoords)
+      await loadDevices() // Menggambar ulang rute yang telah disimpan
     } catch (err) {
       console.error("Gagal menyimpan rute kabel:", err)
     }
@@ -822,8 +823,11 @@ const loadDevices = async () => {
 
             clickPolyline.on('click', (e) => {
               if (store.mapMode !== 'VIEW') return
+              
+              // Hentikan propagasi agar tidak memicu event klik map dasar
+              L.DomEvent.stopPropagation(e)
               if (e.originalEvent) {
-                e.originalEvent.stopPropagation()
+                L.DomEvent.stopPropagation(e.originalEvent)
               }
 
               clearEditHandles()
