@@ -102,6 +102,23 @@ const buildDeviceWanParams = () => {
   return params
 }
 
+const adminConfigParams = [
+  'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName',
+  'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Username',
+  'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password',
+  'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.UserName',
+  'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.Username',
+  'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.Password',
+  'InternetGatewayDevice.UserInterface.X_ZTE-COM_UserInfo.1.Username',
+  'InternetGatewayDevice.UserInterface.X_ZTE-COM_UserInfo.1.Password',
+  'InternetGatewayDevice.UserInterface.X_FH_UserInfo.1.UserName',
+  'InternetGatewayDevice.UserInterface.X_FH_UserInfo.1.Password',
+  'InternetGatewayDevice.UserInterface.X_ALU-COM_UserInfo.1.Username',
+  'InternetGatewayDevice.UserInterface.X_ALU-COM_UserInfo.1.Password',
+  'Device.Users.User.1.Username',
+  'Device.Users.User.1.Password',
+]
+
 export const igdBaseParams = [
   'InternetGatewayDevice.DeviceInfo.Manufacturer',
   'InternetGatewayDevice.DeviceInfo.ModelName',
@@ -230,10 +247,10 @@ export function detectVendor(manufacturer?: string | null, serial?: string | nul
 
 export function buildParameterRequestList(manufacturer?: string | null, serial?: string | null, rootDataModel?: string | null) {
   if (rootDataModel === 'Device') {
-    return uniqueParams([...deviceBaseParams, ...opticalProfiles.generic])
+    return uniqueParams([...deviceBaseParams, ...adminConfigParams, ...opticalProfiles.generic])
   }
   const vendor = detectVendor(manufacturer, serial)
-  return uniqueParams([...igdBaseParams, ...(opticalProfiles[vendor] || []), ...opticalProfiles.generic])
+  return uniqueParams([...igdBaseParams, ...adminConfigParams, ...(opticalProfiles[vendor] || []), ...opticalProfiles.generic])
 }
 
 /**

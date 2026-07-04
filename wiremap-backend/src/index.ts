@@ -324,6 +324,7 @@ interface SyncProgress {
   username: string;
   progress: number;
   status: 'idle' | 'triggered' | 'connected' | 'fetching' | 'success' | 'failed';
+  mode?: 'inform' | 'discover-wan' | 'config';
   error?: string | null;
   updatedAt: number;
 }
@@ -410,13 +411,14 @@ const cleanExpiredSessions = () => {
   }
   for (const [ip, progress] of syncProgress.entries()) {
     const isConfigPush = Boolean(progress.id && pendingConfigs.has(progress.id))
+    const isDiscovery = progress.mode === 'discover-wan'
     let timeout = ACTIVE_SYNC_TIMEOUT_MS
     if (progress.status === 'success' || progress.status === 'failed') {
       timeout = FINISHED_SYNC_RETENTION_MS
     } else if (progress.status === 'triggered') {
-      timeout = isConfigPush ? ACTIVE_SYNC_TIMEOUT_MS : 15000
+      timeout = (isConfigPush || isDiscovery) ? ACTIVE_SYNC_TIMEOUT_MS : 15000
     } else if (progress.status === 'connected' || progress.status === 'fetching') {
-      timeout = isConfigPush ? ACTIVE_SYNC_TIMEOUT_MS : 30000
+      timeout = (isConfigPush || isDiscovery) ? ACTIVE_SYNC_TIMEOUT_MS : 30000
     }
 
     if (now - progress.updatedAt > timeout) {
@@ -425,6 +427,8 @@ const cleanExpiredSessions = () => {
         let errorMsg = 'Timeout menunggu modem mengirim Inform. Pastikan CPE online.'
         if (isConfigPush) {
           errorMsg = 'Timeout menunggu modem target mengirim Inform untuk menerapkan konfigurasi. Pastikan IP management modem bisa diakses dari Mikrotik/bridge dan ConnectionRequestURL benar.'
+        } else if (isDiscovery) {
+          errorMsg = 'Discovery WAN masuk antrian, tetapi modem belum mengirim Inform. Data akan diperbarui otomatis saat Inform berikutnya masuk.'
         } else if (progress.status === 'triggered') {
           errorMsg = 'Modem tidak merespon colek (Connection Request) dalam 15 detik. Pastikan IP management dapat di-ping dari Mikrotik.'
         }
@@ -799,6 +803,7 @@ const cwmpHandler = async (c: any) => {
         username: existingProgress?.username || clientName,
         progress: 40,
         status: 'connected',
+        mode: existingProgress?.mode || 'inform',
         updatedAt: Date.now()
       })
     }
@@ -1108,6 +1113,7 @@ app.get('/api/protected/modem/sync-status', async (c) => {
       username: progress.username,
       progress: progress.progress,
       status: progress.status,
+      mode: progress.mode,
       error: progress.error,
       updatedAt: progress.updatedAt
     }
@@ -1183,6 +1189,7 @@ app.post('/api/protected/modem/:ip/config', async (c) => {
         username: clientName,
         progress: 10,
         status: 'triggered',
+        mode: 'config',
         updatedAt: Date.now()
       })
     }
@@ -1246,6 +1253,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
       username: clientName,
       progress: 10,
       status: 'triggered',
+      mode: 'inform',
       updatedAt: Date.now()
     })
 
@@ -1266,6 +1274,7 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
       username: `ONT-${modemIp}`,
       progress: 100,
       status: 'failed',
+      mode: 'inform',
       error: err.message || 'Gagal mengirim trigger',
       updatedAt: Date.now()
     })
@@ -1282,6 +1291,30 @@ const safeParseJson = (value: any, fallback: any) => {
   }
 }
 
+const findRawParamValue = (raw: Record<string, any>, patterns: RegExp[]) => {
+  for (const [name, value] of Object.entries(raw || {})) {
+    if (value === null || value === undefined || value === '') continue
+    if (patterns.some(pattern => pattern.test(name))) return String(value)
+  }
+  return null
+}
+
+const inferAdminUsername = (raw: Record<string, any>) =>
+  findRawParamValue(raw, [
+    /UserInterface\..*(UserName|Username)$/i,
+    /User\.\d+\.(UserName|Username)$/i,
+    /X_.*Web.*(UserName|Username)$/i,
+    /X_.*Admin.*(UserName|Username)$/i,
+  ])
+
+const inferAdminPassword = (raw: Record<string, any>) =>
+  findRawParamValue(raw, [
+    /UserInterface\..*Password$/i,
+    /User\.\d+\.Password$/i,
+    /X_.*Web.*Password$/i,
+    /X_.*Admin.*Password$/i,
+  ])
+
 const getClientTriggerIpFromRow = (client: any) => {
   const safeWanIp = client.wanIp && !isPublicIp(client.wanIp) ? client.wanIp : null
   return client.lanIp || safeWanIp || null
@@ -1290,6 +1323,7 @@ const getClientTriggerIpFromRow = (client: any) => {
 const toClientInventoryDto = (client: any, activeByUsername: Map<string, any> = new Map()) => {
   const active = client.pppoeUsername ? activeByUsername.get(client.pppoeUsername) : null
   const safeWanIp = client.wanIp && !isPublicIp(client.wanIp) ? client.wanIp : null
+  const rawParams = safeParseJson(client.rawModemParamsJson, {})
   return {
     id: client.id,
     pseudoId: client.id + 1000000,
@@ -1320,8 +1354,8 @@ const toClientInventoryDto = (client: any, activeByUsername: Map<string, any> = 
     wifiConfig: safeParseJson(client.wifiConfigJson, null),
     wanConfig: safeParseJson(client.wanConfigJson, []),
     connectedHosts: safeParseJson(client.connectedHosts, []),
-    adminUsername: client.adminUsername,
-    adminPassword: client.adminPassword,
+    adminUsername: client.adminUsername || inferAdminUsername(rawParams) || 'admin',
+    adminPassword: client.adminPassword || inferAdminPassword(rawParams),
   }
 }
 
@@ -1393,6 +1427,7 @@ const triggerClientInformById = async (c: any, mode: 'inform' | 'discover-wan') 
     username: client.name,
     progress: 10,
     status: 'triggered',
+    mode,
     updatedAt: Date.now()
   })
   syncProgress.set(String(id), {
@@ -1400,16 +1435,30 @@ const triggerClientInformById = async (c: any, mode: 'inform' | 'discover-wan') 
     username: client.name,
     progress: 10,
     status: 'triggered',
+    mode,
     updatedAt: Date.now()
   })
-  const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+  let triggered = false
+  let triggerError: string | null = null
+  try {
+    triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+  } catch (err: any) {
+    triggerError = err.message || 'Trigger modem timeout'
+    console.warn(`[Clients] Trigger ${mode} untuk ${client.name} (${modemIp}) timeout/gagal, tetap menunggu Inform berikutnya:`, triggerError)
+  }
   return c.json({
     success: true,
     mode,
     triggered,
+    queued: !triggered,
+    triggerError,
     message: mode === 'discover-wan'
-      ? 'Discovery WAN dikirim. Menunggu modem Inform dan mengirim parameter WAN.'
-      : 'Inform dikirim. Menunggu modem mengirim data terbaru.'
+      ? (triggered
+          ? 'Discovery WAN dikirim. Menunggu modem Inform dan mengirim parameter WAN.'
+          : 'Discovery WAN masuk antrian. Sistem akan memakai Inform berikutnya dari modem.')
+      : (triggered
+          ? 'Inform dikirim. Menunggu modem mengirim data terbaru.'
+          : 'Inform masuk antrian. Sistem akan memakai Inform berikutnya dari modem.')
   })
 }
 

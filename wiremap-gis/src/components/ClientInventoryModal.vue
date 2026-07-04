@@ -157,16 +157,38 @@ const waitForClientSync = async (client, label = 'Menunggu modem Inform...') => 
 
 const discoverWan = async () => {
   if (!selectedClient.value) return
+  const clientId = selectedClient.value.id
   isDiscovering.value = true
   actionMessage.value = 'Mengirim trigger discovery WAN...'
   actionProgress.value = 10
   actionState.value = 'triggered'
   try {
-    await api.discoverClientWan(selectedClient.value.id)
+    const response = await api.discoverClientWan(clientId)
+    if (response?.queued) {
+      actionMessage.value = 'Trigger masuk antrian. Menunggu Inform berikutnya dari modem...'
+    }
     await waitForClientSync(selectedClient.value, 'Menunggu modem mengirim WAN configuration...')
     actionMessage.value = 'WAN configuration diperbarui'
   } catch (err) {
-    actionMessage.value = 'Gagal ambil data WAN: ' + err.message
+    const message = err.message || ''
+    try {
+      selectedClient.value = await api.getClientDetail(clientId)
+      await loadClients()
+      syncFormsFromClient()
+    } catch (_) {}
+
+    const hasWanData = Array.isArray(selectedClient.value?.wanConfig) && selectedClient.value.wanConfig.length > 0
+    const isInformDelay = /Inform|Timeout|antrian|colek|Connection Request/i.test(message)
+    if (isInformDelay) {
+      actionMessage.value = hasWanData
+        ? 'Modem belum mengirim Inform terbaru. Data WAN terakhir tetap ditampilkan.'
+        : 'Discovery WAN sudah diantrikan. Data WAN akan muncul setelah modem mengirim Inform berikutnya.'
+      actionProgress.value = hasWanData ? 100 : Math.max(actionProgress.value, 35)
+      actionState.value = hasWanData ? 'success' : 'waiting'
+      return
+    }
+
+    actionMessage.value = 'Gagal ambil data WAN: ' + message
     actionProgress.value = 100
     actionState.value = 'failed'
   } finally {
