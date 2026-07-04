@@ -140,7 +140,7 @@ export function parseGetParameterValuesResponse(xmlString: string) {
 
   // Ekstrak Hosts (Daftar perangkat yang terhubung ke LAN/WLAN)
   const connectedHosts: any[] = [];
-  const hostRegex = /<Name>InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)<\/Name>\s*<Value[^>]*>(.*?)<\/Value>/g;
+  const hostRegex = /<Name>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
   let matchRegex;
   const hostsMap: Record<string, any> = {};
   
