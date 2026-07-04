@@ -8,7 +8,7 @@ const props = defineProps({
   allDevices: Array
 })
 
-const emit = defineEmits(['close', 'start-route', 'delete-device'])
+const emit = defineEmits(['close', 'start-route', 'delete-device', 'start-polling'])
 
 const isSavingDetails = ref(false)
 const saveMessage = ref('')
@@ -339,11 +339,14 @@ const handlePushConfig = async () => {
     const targetIp = props.device.lanIp || props.device.wanIp
     const res = await api.pushModemConfig(targetIp, payload)
     
-    configMessage.value = res.message || 'Konfigurasi terkirim.'
-    // Sembunyikan form setelah 3 detik
+    configMessage.value = res.message || 'Konfigurasi terkirim. Menunggu konfirmasi dari modem...'
+    // Mulai polling progress agar UI update otomatis setelah modem merespons
+    emit('start-polling')
+    // Sembunyikan form setelah 5 detik agar user bisa lihat pesan
     setTimeout(() => {
       showConfigForm.value = false
-    }, 3000)
+      configMessage.value = ''
+    }, 5000)
   } catch (err) {
     configMessage.value = 'Gagal mengirim: ' + err.message
   } finally {

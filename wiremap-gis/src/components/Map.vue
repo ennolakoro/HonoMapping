@@ -2118,6 +2118,7 @@ watch(allDevicesData, (newData) => {
       @start-route="startRouteFromDevice"
       @delete-device="deleteDevice"
       @close="isClientModalOpen = false"
+      @start-polling="startProgressPolling"
     />
   </div>
 </template>
