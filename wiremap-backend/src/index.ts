@@ -523,13 +523,26 @@ const cwmpHandler = async (c: any) => {
   console.log(`[DEBUG TR-069] Body Length: ${bodyText.length} karakter`)
   console.log(`=============================================================\n`)
 
-  let session = cwmpSessions.get(clientIp)
+  // Parse Cookie untuk mencocokkan Session ID unik (untuk menangani multiple modem di belakang NAT IP Publik yang sama)
+  const cookieHeader = c.req.header('Cookie') || ''
+  const cookieMatch = cookieHeader.match(/session=([^;]+)/)
+  const cookieSessionId = cookieMatch ? cookieMatch[1].trim() : null
+
+  // Cari session: prioritas dari cookieSessionId, fallback ke clientIp
+  let sessionKey = cookieSessionId && cwmpSessions.has(cookieSessionId) ? cookieSessionId : clientIp
+  let session = cwmpSessions.get(sessionKey)
 
   if (bodyText.includes('Inform')) {
     // 1. Terima event Inform dari Modem
     const informData = parseInform(bodyText)
     console.log(`Mini ACS Menerima Inform dari Modem [${clientIp}]:`, informData)
     
+    // Tentukan sessionKey unik menggunakan SerialNumber agar tidak bertabrakan di IP Publik yang sama
+    if (informData.SerialNumber) {
+      sessionKey = informData.SerialNumber
+      session = cwmpSessions.get(sessionKey)
+    }
+
     if (informData.SerialNumber) {
       // Cari apakah client dengan serial number ini sudah terdaftar
       let existing = await db.select()
@@ -627,20 +640,33 @@ const cwmpHandler = async (c: any) => {
         console.log(`[MiniACS] Auto-created client record for unknown Serial Number: ${informData.SerialNumber}`)
       }
       
-      // Deteksi brand secara dinamis untuk request parameter yang akurat (Generic / Multi-Brand)
-      const manufacturerUpper = (informData.manufacturer || '').toUpperCase()
-      const ouiUpper = (informData.OUI || '').toUpperCase()
-      const modelUpper = (informData.modelName || '').toUpperCase()
+        currentClientIp = existing[0].lanIp
+      } else {
+        clientName = `ONT-${informData.SerialNumber}`
+      }
+    }
 
-      const isHuawei = ouiUpper === '00259E' || manufacturerUpper.includes('HUA') || ouiUpper.includes('HW')
-      const isZte = ouiUpper === '00200A' || manufacturerUpper.includes('ZTE')
-      const isFiberhome = ouiUpper === '00d0d0' || manufacturerUpper.includes('FIBER') || manufacturerUpper.includes('FHTT') || modelUpper.includes('AN5506')
-      const isNokia = ouiUpper === '001A9A' || ouiUpper === '0023F7' || manufacturerUpper.includes('NOK') || manufacturerUpper.includes('ALCA')
-      const isVsol = manufacturerUpper.includes('VSOL') || manufacturerUpper.includes('V-SOL') || manufacturerUpper.includes('NETLINK')
+    if (session) {
+      session.currentCwmpId = informData.cwmpId || ''
+      session.currentCwmpNamespace = informData.cwmpNamespace || 'urn:dslforum-org:cwmp-1-0'
+      session.updatedAt = Date.now()
+      cwmpSessions.set(sessionKey, session)
+    } else {
+      const isHuawei = informData.manufacturer?.toLowerCase().includes('huawei') || 
+                       informData.SerialNumber?.toUpperCase().startsWith('485754') || 
+                       informData.SerialNumber?.toUpperCase().startsWith('HWTC')
+      const isZte = informData.manufacturer?.toLowerCase().includes('zte') || 
+                    informData.SerialNumber?.toUpperCase().startsWith('5A5445') || 
+                    informData.SerialNumber?.toUpperCase().startsWith('ZTEG')
+      const isFiberhome = informData.manufacturer?.toLowerCase().includes('fiberhome') || 
+                          informData.SerialNumber?.toUpperCase().startsWith('464854')
+      const isNokia = informData.manufacturer?.toLowerCase().includes('nokia') || 
+                      informData.manufacturer?.toLowerCase().includes('alcatel')
+      const isVsol = informData.manufacturer?.toLowerCase().includes('vsol') || 
+                     informData.manufacturer?.toLowerCase().includes('v-sol')
 
       let paramsToReq: string[] = []
       
-      // Parameter standar WLAN untuk semua ONT
       const baseWlanParams = [
         'InternetGatewayDevice.DeviceInfo.Manufacturer',
         'InternetGatewayDevice.DeviceInfo.ModelName',
@@ -659,7 +685,6 @@ const cwmpHandler = async (c: any) => {
       ]
 
       if (isHuawei) {
-        console.log(`[ACS Brand] Deteksi Huawei ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
@@ -671,7 +696,6 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage',
         ]
       } else if (isZte) {
-        console.log(`[ACS Brand] Deteksi ZTE ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
@@ -684,7 +708,6 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage',
         ]
       } else if (isFiberhome) {
-        console.log(`[ACS Brand] Deteksi Fiberhome ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower',
@@ -693,7 +716,6 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.SupplyVoltage',
         ]
       } else if (isNokia) {
-        console.log(`[ACS Brand] Deteksi Nokia ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower',
@@ -702,30 +724,24 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.SupplyVoltage',
         ]
       } else if (isVsol) {
-        console.log(`[ACS Brand] Deteksi VSOL/XPON ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature',
           'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage',
-          // Fallback if X_GponInterface is used
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature',
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage',
         ]
       } else {
-        // Fallback: Parameter generic / brand lain
-        console.log(`[ACS Brand] Deteksi Brand Generic/Lainnya (${informData.manufacturer}) untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
-          // Coba request standard GPON TR-098 path optik untuk generic (kemungkinan terbaca jika modenya standard)
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature',
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage',
-          // Coba fallback brand-brand umum
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower',
@@ -736,7 +752,7 @@ const cwmpHandler = async (c: any) => {
 
       session = {
         waitingForEmptyPost: true,
-        currentModemSN: informData.SerialNumber,
+        currentModemSN: informData.SerialNumber || '',
         currentCwmpId: informData.cwmpId || '',
         currentCwmpNamespace: informData.cwmpNamespace || 'urn:dslforum-org:cwmp-1-0',
         currentParamsToRequest: paramsToReq,
@@ -752,9 +768,8 @@ const cwmpHandler = async (c: any) => {
         stage: 'params',
         pendingModemData: undefined,
       }
-      cwmpSessions.set(clientIp, session)
+      cwmpSessions.set(sessionKey, session)
 
-      // Set progress tracker status
       const existingProgress = getFirstProgress(progressKeys)
       setProgressForKeys(progressKeys, {
         id: clientId,
@@ -763,7 +778,6 @@ const cwmpHandler = async (c: any) => {
         status: 'connected',
         updatedAt: Date.now()
       })
-      console.log(`[SYNC] Inform diterima untuk ${clientName} SN=${informData.SerialNumber} requestIp=${clientIp} localIp=${currentClientIp || 'N/A'} progressKeys=${progressKeys.join(',')}`)
     }
 
     const responseXml = createInformResponse(session ? session.currentCwmpId : '', session ? session.currentCwmpNamespace : undefined)
@@ -771,28 +785,24 @@ const cwmpHandler = async (c: any) => {
       headers: {
         'Content-Type': 'text/xml',
         'Server': 'Hono-MiniACS',
-        'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+        'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
       }
     })
   }
 
   if (session) {
-    // Jika modem mengirim body kosong dan kita sedang menunggunya
     if (bodyText.trim() === '' && session.waitingForEmptyPost) {
       const clientId = session.currentTriggeredClientId;
       const pendingConfig = clientId ? pendingConfigs.get(clientId) : null;
 
       session.waitingForEmptyPost = false;
       session.updatedAt = Date.now()
-      cwmpSessions.set(clientIp, session)
+      cwmpSessions.set(sessionKey, session)
 
       if (clientId && pendingConfig && pendingConfig.status === 'pending') {
-        console.log(`Menerima Empty POST dari ${clientIp}, mengirim SetParameterValues dengan ID: ${session.currentCwmpId}...`)
-        
         pendingConfig.status = 'success';
         pendingConfigs.set(clientId, pendingConfig);
 
-        // Update progress tracker
         const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
         const prog = getFirstProgress(progressKeys)
         if (prog) {
@@ -809,14 +819,11 @@ const cwmpHandler = async (c: any) => {
           headers: {
             'Content-Type': 'text/xml',
             'Server': 'Hono-MiniACS',
-            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
           }
         })
       }
 
-      console.log(`Menerima Empty POST dari ${clientIp}, mengirim GetParameterValues dengan ID: ${session.currentCwmpId}...`)
-      
-      // Update progress tracker
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
       if (prog) {
@@ -833,15 +840,12 @@ const cwmpHandler = async (c: any) => {
         headers: {
           'Content-Type': 'text/xml',
           'Server': 'Hono-MiniACS',
-          'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+          'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
         }
       })
     }
     
     if (bodyText.includes('SetParameterValuesResponse')) {
-      console.log(`[CWMP] Berhasil mengaplikasikan SetParameterValues ke modem ${clientIp}`);
-      
-      // Update progress tracker
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
       if (prog) {
@@ -853,13 +857,12 @@ const cwmpHandler = async (c: any) => {
         })
       }
 
-      // Setelah SET, kita GET parameter lagi untuk memastikan data terbaru tersimpan di DB
       const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
       return new Response(responseXml, {
         headers: {
           'Content-Type': 'text/xml',
           'Server': 'Hono-MiniACS',
-          'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+          'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
         }
       })
     }
@@ -869,14 +872,11 @@ const cwmpHandler = async (c: any) => {
       
       if (currentStage === 'params') {
         const params = parseGetParameterValuesResponse(bodyText)
-        console.log(`Mini ACS Menerima Parameter Modem dari [${clientIp}] (Stage 1):`, params)
-        
         session.pendingModemData = params;
         session.stage = 'host_names';
         session.updatedAt = Date.now();
-        cwmpSessions.set(clientIp, session);
+        cwmpSessions.set(sessionKey, session);
         
-        // Update progress tracker
         const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
         const prog = getFirstProgress(progressKeys)
         if (prog) {
@@ -888,51 +888,44 @@ const cwmpHandler = async (c: any) => {
           })
         }
         
-        console.log(`[CWMP Stage 1] Mengirim GetParameterNames ke [${clientIp}] untuk mendeteksi host terhubung...`)
         const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.', false);
         return new Response(responseXml, {
           headers: {
             'Content-Type': 'text/xml',
             'Server': 'Hono-MiniACS',
-            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
           }
         })
       } else if (currentStage === 'host_values') {
         const hosts = parseHostsFromGetParameterValues(bodyText)
-        console.log(`Mini ACS Menerima Hosts dari [${clientIp}] (Stage 3):`, hosts.length, 'hosts')
-        
         const params = session.pendingModemData || {}
         params.connectedHosts = hosts;
         
         await saveModemDataToDb(c, db, session, params, clientIp)
         
-        cwmpSessions.delete(clientIp)
+        cwmpSessions.delete(sessionKey)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
     }
     
     if (bodyText.includes('GetParameterNamesResponse')) {
       if (session.stage === 'host_names') {
-        console.log(`[DEBUG CWMP] Raw GetParameterNamesResponse XML dari [${clientIp}]:\n`, bodyText)
         const hostParams = parseGetParameterNamesResponse(bodyText)
-        console.log(`Mini ACS Menerima Host Parameter Names dari [${clientIp}] (Stage 2):`, hostParams.length, 'parameters')
         
         if (hostParams.length === 0) {
-          console.log(`[CWMP Stage 2] Tidak ada host terhubung / parameter tidak didukung. Selesai.`)
           const params = session.pendingModemData || {}
           params.connectedHosts = []
           
           await saveModemDataToDb(c, db, session, params, clientIp)
           
-          cwmpSessions.delete(clientIp)
+          cwmpSessions.delete(sessionKey)
           return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
         }
         
         session.stage = 'host_values';
         session.updatedAt = Date.now();
-        cwmpSessions.set(clientIp, session);
+        cwmpSessions.set(sessionKey, session);
         
-        // Update progress tracker
         const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
         const prog = getFirstProgress(progressKeys)
         if (prog) {
@@ -944,36 +937,32 @@ const cwmpHandler = async (c: any) => {
           })
         }
         
-        console.log(`[CWMP Stage 2] Mengirim GetParameterValues ke [${clientIp}] untuk ${hostParams.length} host params`)
         const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, hostParams);
         return new Response(responseXml, {
           headers: {
             'Content-Type': 'text/xml',
             'Server': 'Hono-MiniACS',
-            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
           }
         })
       }
     }
 
-    // Jika modem mengirim Fault 9005 (parameter tidak valid)
     if (bodyText.includes('Fault') || bodyText.includes('fault')) {
       const faultCode = (bodyText.match(/<FaultCode>(\d+)<\/FaultCode>/) || [])[1] || '?';
-      console.log(`[CWMP] Modem ${clientIp} mengirim Fault ${faultCode}`)
-
+      
       if (faultCode === '9005' && (session.stage === 'host_names' || session.stage === 'host_values')) {
-        console.log(`[CWMP] Host list tidak didukung oleh ${clientIp}. Simpan data modem utama tanpa daftar host.`)
         const params = session.pendingModemData || {}
         params.connectedHosts = []
         await saveModemDataToDb(c, db, session, params, clientIp)
-        cwmpSessions.delete(clientIp)
+        cwmpSessions.delete(sessionKey)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
       
       if (faultCode === '9005' && !session.gponFaultRetried && session.currentModemSN) {
         session.gponFaultRetried = true;
         session.updatedAt = Date.now()
-        cwmpSessions.set(clientIp, session)
+        cwmpSessions.set(sessionKey, session)
         
         const baseParams = [
           'InternetGatewayDevice.DeviceInfo.Manufacturer',
@@ -994,18 +983,16 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
           'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
         ];
-        console.log(`[CWMP] Retry tanpa parameter GPON/host rawan fault untuk ${clientIp}`);
         const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, baseParams);
         return new Response(retryXml, {
           headers: {
             'Content-Type': 'text/xml',
             'Server': 'Hono-MiniACS',
-            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
           }
         })
       }
       
-      console.log(`[CWMP] Sesi ${clientIp} diakhiri karena Fault.`)
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
       if (prog) {
@@ -1017,7 +1004,7 @@ const cwmpHandler = async (c: any) => {
           updatedAt: Date.now()
         })
       }
-      cwmpSessions.delete(clientIp)
+      cwmpSessions.delete(sessionKey)
       return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
     }
   }
