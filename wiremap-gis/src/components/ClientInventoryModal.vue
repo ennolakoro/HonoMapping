@@ -198,16 +198,34 @@ const discoverWan = async () => {
 
 const informClient = async () => {
   if (!selectedClient.value) return
+  const clientId = selectedClient.value.id
   isInforming.value = true
   actionMessage.value = 'Mengirim trigger Inform...'
   actionProgress.value = 10
   actionState.value = 'triggered'
   try {
-    await api.informClient(selectedClient.value.id)
+    const response = await api.informClient(clientId)
+    if (response?.queued) {
+      actionMessage.value = 'Trigger masuk antrian. Menunggu Inform berikutnya dari modem...'
+    }
     await waitForClientSync(selectedClient.value, 'Menunggu modem mengirim data terbaru...')
     actionMessage.value = 'Data modem diperbarui'
   } catch (err) {
-    actionMessage.value = 'Gagal Inform: ' + err.message
+    const message = err.message || ''
+    try {
+      selectedClient.value = await api.getClientDetail(clientId)
+      await loadClients()
+      syncFormsFromClient()
+    } catch (_) {}
+
+    if (/Inform|Timeout|antrian|colek|Connection Request/i.test(message)) {
+      actionMessage.value = 'Inform sudah diantrikan. Data akan diperbarui otomatis saat modem mengirim Inform berikutnya.'
+      actionProgress.value = Math.max(actionProgress.value, 35)
+      actionState.value = 'waiting'
+      return
+    }
+
+    actionMessage.value = 'Gagal Inform: ' + message
     actionProgress.value = 100
     actionState.value = 'failed'
   } finally {

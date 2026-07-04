@@ -412,13 +412,14 @@ const cleanExpiredSessions = () => {
   for (const [ip, progress] of syncProgress.entries()) {
     const isConfigPush = Boolean(progress.id && pendingConfigs.has(progress.id))
     const isDiscovery = progress.mode === 'discover-wan'
+    const isClientInform = progress.mode === 'inform' && Boolean(progress.id)
     let timeout = ACTIVE_SYNC_TIMEOUT_MS
     if (progress.status === 'success' || progress.status === 'failed') {
       timeout = FINISHED_SYNC_RETENTION_MS
     } else if (progress.status === 'triggered') {
-      timeout = (isConfigPush || isDiscovery) ? ACTIVE_SYNC_TIMEOUT_MS : 15000
+      timeout = (isConfigPush || isDiscovery || isClientInform) ? ACTIVE_SYNC_TIMEOUT_MS : 15000
     } else if (progress.status === 'connected' || progress.status === 'fetching') {
-      timeout = (isConfigPush || isDiscovery) ? ACTIVE_SYNC_TIMEOUT_MS : 30000
+      timeout = (isConfigPush || isDiscovery || isClientInform) ? ACTIVE_SYNC_TIMEOUT_MS : 30000
     }
 
     if (now - progress.updatedAt > timeout) {
@@ -429,6 +430,8 @@ const cleanExpiredSessions = () => {
           errorMsg = 'Timeout menunggu modem target mengirim Inform untuk menerapkan konfigurasi. Pastikan IP management modem bisa diakses dari Mikrotik/bridge dan ConnectionRequestURL benar.'
         } else if (isDiscovery) {
           errorMsg = 'Discovery WAN masuk antrian, tetapi modem belum mengirim Inform. Data akan diperbarui otomatis saat Inform berikutnya masuk.'
+        } else if (isClientInform) {
+          errorMsg = 'Inform masuk antrian, tetapi modem belum mengirim data terbaru. Data akan diperbarui otomatis saat Inform berikutnya masuk.'
         } else if (progress.status === 'triggered') {
           errorMsg = 'Modem tidak merespon colek (Connection Request) dalam 15 detik. Pastikan IP management dapat di-ping dari Mikrotik.'
         }
@@ -1259,13 +1262,21 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
 
     // Menyuruh Mikrotik "mencolek" modem. Bridge lama bisa timeout 10 detik,
     // tetapi Inform dari ONT masih bisa masuk setelah request ini selesai.
-    const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+    let triggered = false
+    let triggerError: string | null = null
+    try {
+      triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+    } catch (err: any) {
+      triggerError = err.message || 'Trigger modem timeout'
+      console.warn(`[SYNC] Trigger timeout/gagal untuk ${clientName} (${modemIp}), tetap menunggu Inform berikutnya:`, triggerError)
+    }
     console.log(`[SYNC] Trigger ${triggered ? 'terkirim' : 'ditunggu/queued'} untuk ${clientName} (${modemIp})`)
     return c.json({
       message: triggered
         ? `Sinyal trigger dikirim ke modem ${modemIp} via Mikrotik Lokal`
-        : `Trigger modem ${modemIp} sedang ditunggu. Jika belum masuk, cek Bridge/Mikrotik dan CWMP modem.`,
-      queued: !triggered
+        : `Trigger modem ${modemIp} masuk antrian. Sistem tetap menunggu Inform berikutnya dari modem.`,
+      queued: !triggered,
+      triggerError
     })
   } catch (err: any) {
     console.error(`[SYNC] Gagal trigger Inform untuk ${modemIp}:`, err)
