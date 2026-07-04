@@ -10,6 +10,7 @@ import { store } from './store'
 const isLoggedIn = ref(false)
 const isRouterModalOpen = ref(false)
 const isRouterConfigured = ref(false)
+const isValidatingSettings = ref(false)
 const queueCount = ref(0)
 
 const handleQueueCount = (event) => {
@@ -30,6 +31,7 @@ onUnmounted(() => {
 
 const checkConnectionSettings = async (isSaveEvent = false) => {
   try {
+    isValidatingSettings.value = true
     const settings = await api.getSettings()
     if (!settings.MIKROTIK_IP || !settings.MIKROTIK_USER || !settings.MIKROTIK_PASS) {
       isRouterModalOpen.value = true
@@ -47,6 +49,8 @@ const checkConnectionSettings = async (isSaveEvent = false) => {
       isRouterModalOpen.value = true
       isRouterConfigured.value = false
     }
+  } finally {
+    isValidatingSettings.value = false
   }
 }
 
@@ -58,6 +62,8 @@ const handleLoginSuccess = () => {
 const handleLogout = () => {
   api.logout()
   isLoggedIn.value = false
+  isRouterConfigured.value = false
+  isValidatingSettings.value = false
 }
 
 const handleSyncRequest = () => {
@@ -136,7 +142,14 @@ const handleSaveDevice = async (deviceData) => {
         <button @click="store.cancelAdd()" class="underline text-xs hover:text-white/80">Batal</button>
       </div>
 
-      <LeafletMap v-if="isRouterConfigured" class="flex-1" />
+      <!-- Status Memuat Validasi -->
+      <div v-if="isValidatingSettings" class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white gap-3 p-6">
+        <span class="material-symbols-outlined text-5xl text-blue-500 animate-spin">refresh</span>
+        <h2 class="text-lg font-bold">Memverifikasi Konfigurasi Jaringan...</h2>
+        <p class="text-slate-400 text-xs">Menghubungkan ke database dan memeriksa kredensial router...</p>
+      </div>
+
+      <LeafletMap v-else-if="isRouterConfigured" class="flex-1" />
       <div v-else class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white gap-4 p-6">
         <span class="material-symbols-outlined text-6xl text-blue-500 animate-pulse">settings_ethernet</span>
         <h2 class="text-xl font-bold">Konfigurasi Router API Diperlukan</h2>
