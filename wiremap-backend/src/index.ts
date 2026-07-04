@@ -411,6 +411,20 @@ const cleanExpiredSessions = () => {
       }
     }
   }
+
+  for (const [clientId, pendingConfig] of pendingConfigs.entries()) {
+    const elapsed = now - pendingConfig.updatedAt
+    if ((pendingConfig.status === 'pending' || pendingConfig.status === 'sending') && elapsed > ACTIVE_SYNC_TIMEOUT_MS) {
+      pendingConfigs.set(clientId, {
+        ...pendingConfig,
+        status: 'failed',
+        error: 'Timeout menunggu modem target mengirim Inform untuk menerapkan konfigurasi.',
+        updatedAt: now
+      })
+    } else if ((pendingConfig.status === 'success' || pendingConfig.status === 'failed') && elapsed > FINISHED_SYNC_RETENTION_MS) {
+      pendingConfigs.delete(clientId)
+    }
+  }
 }
 
 const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: any, clientIp: string) => {
@@ -929,6 +943,7 @@ const cwmpHandler = async (c: any) => {
         const pc = pendingConfigs.get(session.currentTriggeredClientId)
         if (pc && pc.status === 'sending') {
           pc.status = 'success'
+          pc.updatedAt = Date.now()
           pendingConfigs.set(session.currentTriggeredClientId, pc)
           console.log(`[CONFIG] SetParameterValuesResponse diterima & dikonfirmasi untuk clientId=${session.currentTriggeredClientId}. Menyimpan config ke DB langsung...`)
 
@@ -1163,6 +1178,29 @@ app.get('/api/protected/modem/sync-status', async (c) => {
       updatedAt: progress.updatedAt
     }
   }
+  for (const [clientId, pendingConfig] of pendingConfigs.entries()) {
+    const progress =
+      pendingConfig.status === 'success' ? 100 :
+      pendingConfig.status === 'failed' ? 100 :
+      pendingConfig.status === 'sending' ? 70 :
+      10
+    const status =
+      pendingConfig.status === 'success' ? 'success' :
+      pendingConfig.status === 'failed' ? 'failed' :
+      pendingConfig.status === 'sending' ? 'fetching' :
+      'triggered'
+    const item = {
+      id: clientId,
+      username: `Client-${clientId}`,
+      progress,
+      status,
+      error: pendingConfig.error,
+      updatedAt: pendingConfig.updatedAt,
+      configStatus: pendingConfig.status
+    }
+    data[pendingConfig.modemIp] = data[pendingConfig.modemIp] || item
+    data[String(clientId)] = data[String(clientId)] || item
+  }
   return c.json(data)
 })
 
@@ -1226,8 +1264,8 @@ app.post('/api/protected/modem/:ip/config', async (c) => {
       queued: true,
       triggered,
       message: triggered
-        ? `Konfigurasi masuk antrian. Menunggu modem ${clientName} mengirim Inform untuk menerapkan setting.`
-        : `Konfigurasi masuk antrian, tetapi trigger ke ${clientName} timeout. Sistem tetap menunggu Inform berikutnya dari modem.`
+        ? `Konfigurasi masuk antrian dan modem ${clientName} sudah diminta segera Inform untuk menerapkan setting.`
+        : `Konfigurasi masuk antrian, tetapi trigger Inform ke ${clientName} timeout. Sistem tetap menunggu Inform berikutnya dari modem.`
     })
   } catch (err: any) {
     return c.json({ error: 'Gagal memproses konfigurasi', details: err.message }, 500)

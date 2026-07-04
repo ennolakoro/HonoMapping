@@ -260,6 +260,8 @@ const handleRemoveRoute = async () => {
 const showConfigForm = ref(false)
 const isPushingConfig = ref(false)
 const configMessage = ref('')
+const configProgress = ref(0)
+const configState = ref('idle')
 const configForm = ref({
   pppoeUsername: '',
   pppoePassword: '',
@@ -284,6 +286,8 @@ watch(() => props.device?.id, () => {
   if (!showConfigForm.value) return
   resetConfigFormFromDevice()
   configMessage.value = ''
+  configProgress.value = 0
+  configState.value = 'idle'
 })
 
 const handleOpenConfig = () => {
@@ -291,17 +295,63 @@ const handleOpenConfig = () => {
   if (showConfigForm.value) {
     resetConfigFormFromDevice()
     configMessage.value = ''
+    configProgress.value = 0
+    configState.value = 'idle'
   }
+}
+
+const waitForConfigApply = async (targetIp, clientId) => {
+  const statusKeys = [targetIp, String(clientId)].filter(Boolean)
+  const timeoutAt = Date.now() + 60000
+
+  while (Date.now() < timeoutAt) {
+    await new Promise(resolve => setTimeout(resolve, 2500))
+    const statusMap = await api.getModemSyncStatus()
+    const status = statusKeys.map(key => statusMap[key]).find(Boolean)
+
+    if (!status) {
+      configMessage.value = 'Menunggu modem target mengirim Inform...'
+      configProgress.value = Math.max(configProgress.value, 15)
+      configState.value = 'waiting'
+      continue
+    }
+
+    configProgress.value = Number(status.progress || configProgress.value || 10)
+    configState.value = status.status || 'waiting'
+
+    if (status.status === 'failed') {
+      configProgress.value = 100
+      configState.value = 'failed'
+      throw new Error(status.error || 'Modem menolak konfigurasi atau tidak mengirim Inform.')
+    }
+
+    if (status.status === 'success') {
+      configProgress.value = 100
+      configState.value = 'success'
+      window.dispatchEvent(new CustomEvent('refresh-map'))
+      return
+    }
+
+    if (status.status === 'connected') configMessage.value = 'Modem terhubung, menyiapkan konfigurasi...'
+    else if (status.status === 'fetching') configMessage.value = 'Konfigurasi dikirim, menunggu konfirmasi modem...'
+    else configMessage.value = 'Menghubungi modem target...'
+  }
+
+  throw new Error('Timeout menunggu modem target mengonfirmasi perubahan.')
 }
 
 const handlePushConfig = async () => {
   if (!props.device?.lanIp && !props.device?.wanIp) {
     configMessage.value = 'Gagal: IP Modem tidak diketahui.'
+    configProgress.value = 100
+    configState.value = 'failed'
     return
   }
 
   isPushingConfig.value = true
   configMessage.value = 'Memproses...'
+  configProgress.value = 8
+  configState.value = 'triggered'
 
   try {
     const params = []
@@ -327,6 +377,8 @@ const handlePushConfig = async () => {
 
     if (params.length === 0) {
       configMessage.value = 'Tidak ada parameter yang diisi.'
+      configProgress.value = 0
+      configState.value = 'idle'
       isPushingConfig.value = false
       return
     }
@@ -340,15 +392,17 @@ const handlePushConfig = async () => {
     const res = await api.pushModemConfig(targetIp, payload)
     
     configMessage.value = res.message || 'Konfigurasi terkirim. Menunggu konfirmasi dari modem...'
-    // Mulai polling progress agar UI update otomatis setelah modem merespons
+    configProgress.value = res.triggered ? 18 : 12
+    configState.value = 'triggered'
     emit('start-polling')
-    // Sembunyikan form setelah 5 detik agar user bisa lihat pesan
-    setTimeout(() => {
-      showConfigForm.value = false
-      configMessage.value = ''
-    }, 5000)
+    const realClientId = props.device.id >= 1000000 ? props.device.id - 1000000 : props.device.id
+    await waitForConfigApply(targetIp, realClientId)
+    configMessage.value = 'Berhasil diterapkan ke modem. Data detail diperbarui.'
+    resetConfigFormFromDevice()
   } catch (err) {
     configMessage.value = 'Gagal mengirim: ' + err.message
+    configProgress.value = 100
+    configState.value = 'failed'
   } finally {
     isPushingConfig.value = false
   }
@@ -463,6 +517,15 @@ const handlePushConfig = async () => {
             <span v-if="configMessage" class="save-message mb-3" :class="{ 'is-error': configMessage.startsWith('Gagal') }">
               {{ configMessage }}
             </span>
+            <div v-if="configMessage || isPushingConfig" class="cpe-progress" :class="`is-${configState}`">
+              <div class="cpe-progress-meta">
+                <span>{{ configState === 'success' ? 'Selesai' : configState === 'failed' ? 'Gagal' : 'Push & Inform' }}</span>
+                <strong>{{ Math.round(configProgress) }}%</strong>
+              </div>
+              <div class="cpe-progress-track">
+                <div class="cpe-progress-fill" :style="{ width: `${configProgress}%` }"></div>
+              </div>
+            </div>
             <form @submit.prevent="handlePushConfig" class="flex flex-col gap-2.5 mt-3">
               <div class="flex items-center text-[10px] gap-2">
                 <span class="w-32 text-slate-400 font-bold text-left">PPPoE Username:</span>
@@ -1613,6 +1676,71 @@ h3 {
   border-top: 1px dashed rgba(255, 255, 255, 0.1);
   animation: fadeIn 0.3s ease;
 }
+
+.config-form-container .save-message {
+  display: block;
+  max-width: none;
+  text-align: left;
+  white-space: normal;
+}
+
+.cpe-progress {
+  margin: 10px 0 12px;
+  padding: 9px;
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 8px;
+  background: rgba(2, 12, 27, 0.38);
+}
+
+.cpe-progress-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 7px;
+  color: #bae6fd;
+  font-size: 10px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.cpe-progress-meta strong {
+  color: #67e8f9;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.cpe-progress-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.85);
+}
+
+.cpe-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #0ea5e9, #22d3ee, #34d399);
+  box-shadow: 0 0 16px rgba(34, 211, 238, 0.45);
+  transition: width 0.35s ease;
+}
+
+.cpe-progress.is-failed {
+  border-color: rgba(248, 113, 113, 0.32);
+}
+
+.cpe-progress.is-failed .cpe-progress-meta,
+.cpe-progress.is-failed .cpe-progress-meta strong {
+  color: #fca5a5;
+}
+
+.cpe-progress.is-failed .cpe-progress-fill {
+  background: linear-gradient(90deg, #ef4444, #f97316);
+  box-shadow: 0 0 16px rgba(248, 113, 113, 0.35);
+}
+
+.cpe-progress.is-success .cpe-progress-fill {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(-10px); }
   to { opacity: 1; transform: translateY(0); }
