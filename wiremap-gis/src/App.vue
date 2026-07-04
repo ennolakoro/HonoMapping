@@ -28,7 +28,7 @@ onUnmounted(() => {
   window.removeEventListener('customer-queue-count', handleQueueCount)
 })
 
-const checkConnectionSettings = async () => {
+const checkConnectionSettings = async (isSaveEvent = false) => {
   try {
     const settings = await api.getSettings()
     if (!settings.MIKROTIK_IP || !settings.MIKROTIK_USER || !settings.MIKROTIK_PASS) {
@@ -36,10 +36,17 @@ const checkConnectionSettings = async () => {
       isRouterConfigured.value = false
     } else {
       isRouterConfigured.value = true
+      if (isSaveEvent !== true) {
+        isRouterModalOpen.value = false
+      }
     }
-  } catch {
-    isRouterModalOpen.value = true
-    isRouterConfigured.value = false
+  } catch (err) {
+    if (err.message === 'Sesi berakhir' || err.message?.includes('Unauthorized')) {
+      handleLogout()
+    } else {
+      isRouterModalOpen.value = true
+      isRouterConfigured.value = false
+    }
   }
 }
 
@@ -145,7 +152,7 @@ const handleSaveDevice = async (deviceData) => {
     <RouterConfigModal
       :is-open="isRouterModalOpen"
       @close="isRouterModalOpen = false"
-      @saved="checkConnectionSettings"
+      @saved="checkConnectionSettings(true)"
     />
   </template>
 </template>

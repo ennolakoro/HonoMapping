@@ -168,6 +168,10 @@ export const api = {
         'Authorization': `Bearer ${authToken}`
       }
     });
+    if (res.status === 401) {
+      this.logout();
+      throw new Error('Sesi berakhir');
+    }
     if (!res.ok) throw new Error('Gagal mengambil konfigurasi');
     return res.json();
   },
@@ -181,6 +185,10 @@ export const api = {
       },
       body: JSON.stringify(settingsData)
     });
+    if (res.status === 401) {
+      this.logout();
+      throw new Error('Sesi berakhir');
+    }
     if (!res.ok) throw new Error('Gagal menyimpan konfigurasi');
     return res.json();
   },
