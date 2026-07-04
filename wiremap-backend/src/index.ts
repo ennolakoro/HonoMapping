@@ -286,7 +286,7 @@ interface PendingConfig {
   clientId: number;
   modemIp: string;
   params: { name: string; value: string; type: string }[];
-  status: 'pending' | 'success' | 'failed';
+  status: 'pending' | 'sending' | 'success' | 'failed';
   error?: string;
   updatedAt: number;
 }
@@ -838,7 +838,7 @@ const cwmpHandler = async (c: any) => {
       cwmpSessions.set(sessionKey, session)
 
       if (clientId && pendingConfig && pendingConfig.status === 'pending') {
-        pendingConfig.status = 'success';
+        pendingConfig.status = 'sending'; // Tandai sebagai 'sedang dikirim', bukan 'success' dulu
         pendingConfigs.set(clientId, pendingConfig);
 
         const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
@@ -852,6 +852,7 @@ const cwmpHandler = async (c: any) => {
           })
         }
 
+        console.log(`[CONFIG] Mengirimkan SetParameterValues untuk clientId=${clientId} (${session.currentModemSN})`);
         const responseXml = createSetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, pendingConfig.params);
         return new Response(responseXml, {
           headers: {
@@ -902,7 +903,15 @@ const cwmpHandler = async (c: any) => {
       session.updatedAt = Date.now();
       cwmpSessions.set(sessionKey, session);
 
-      console.log(`[CONFIG] SetParameterValuesResponse diterima. Stage direset ke 'params'. Membaca konfigurasi terbaru dari modem...`);
+      // Tandai pendingConfig sebagai 'success' setelah modem konfirmasi via SetParameterValuesResponse
+      if (session.currentTriggeredClientId) {
+        const pc = pendingConfigs.get(session.currentTriggeredClientId)
+        if (pc && pc.status === 'sending') {
+          pc.status = 'success'
+          pendingConfigs.set(session.currentTriggeredClientId, pc)
+          console.log(`[CONFIG] SetParameterValuesResponse diterima & dikonfirmasi untuk clientId=${session.currentTriggeredClientId}. Stage direset ke 'params'. Membaca konfigurasi terbaru dari modem...`)
+        }
+      }
 
       const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
       return new Response(responseXml, {
@@ -1127,8 +1136,34 @@ app.post('/api/protected/modem/:ip/config', async (c) => {
 
     console.log(`[CONFIG] Menyimpan konfigurasi tertunda untuk modemIp=${modemIp} clientId=${clientId}`)
 
-    // Sama seperti sync, kita trigger modem agar segera Inform
-    await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL)
+    // Cari nama client & connectionRequestUrl dari memory/DB
+    let clientName = `ONT-${modemIp}`
+    let connectionRequestUrl: string | null = modemConnectionUrls.get(modemIp) || null
+    const client = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
+    if (client[0]) {
+      clientName = client[0].name
+      if (!connectionRequestUrl) {
+        connectionRequestUrl = (client[0] as any).connectionRequestUrl || null
+      }
+    }
+
+    // Set progress agar frontend bisa tracking status push config
+    const progressKeys = [modemIp, String(clientId)]
+    for (const key of progressKeys) {
+      syncProgress.set(key, {
+        id: clientId,
+        username: clientName,
+        progress: 10,
+        status: 'triggered',
+        updatedAt: Date.now()
+      })
+    }
+
+    console.log(`[CONFIG] Trigger modem ${clientName} (${modemIp}) crUrl=${connectionRequestUrl || 'NOT_FOUND_YET'}`)
+    
+    // Trigger modem agar segera Inform ke ACS (pakai connectionRequestUrl jika ada)
+    const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+    console.log(`[CONFIG] Trigger ${triggered ? 'berhasil' : 'gagal/timeout'} untuk ${clientName}`)
     
     return c.json({ success: true, message: `Konfigurasi disimpan. Modem ${modemIp} di-trigger untuk menarik konfigurasi.` })
   } catch (err: any) {
