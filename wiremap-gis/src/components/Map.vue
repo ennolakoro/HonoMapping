@@ -1525,6 +1525,15 @@ watch(unmappedClients, (clients) => {
     detail: { count: clients.length }
   }))
 }, { immediate: true })
+
+watch(allDevicesData, (newData) => {
+  if (selectedClient.value) {
+    const fresh = newData.find(d => d.id === selectedClient.value.id)
+    if (fresh) {
+      selectedClient.value = fresh
+    }
+  }
+})
 </script>
 
 <template>
