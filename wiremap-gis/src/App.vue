@@ -9,7 +9,7 @@ import { store } from './store'
 
 const isLoggedIn = ref(false)
 const isRouterModalOpen = ref(false)
-const isRouterConfigured = ref(true)
+const isRouterConfigured = ref(false)
 const queueCount = ref(0)
 
 const handleQueueCount = (event) => {
