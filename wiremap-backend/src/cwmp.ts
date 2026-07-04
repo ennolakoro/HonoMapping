@@ -64,9 +64,9 @@ export function createGetParameterNames(
  */
 export function parseGetParameterNamesResponse(xmlString: string): string[] {
   const hostIndexes = new Set<string>();
-  const regex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.?\s*<\/Name>/g;
+  const hostsRegex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.?\s*<\/Name>/g;
   let match;
-  while ((match = regex.exec(xmlString)) !== null) {
+  while ((match = hostsRegex.exec(xmlString)) !== null) {
     hostIndexes.add(match[1]);
   }
   
@@ -77,15 +77,30 @@ export function parseGetParameterNamesResponse(xmlString: string): string[] {
     params.push(`InternetGatewayDevice.LANDevice.1.Hosts.Host.${idx}.HostName`);
     params.push(`InternetGatewayDevice.LANDevice.1.Hosts.Host.${idx}.Active`);
   }
-  console.log('[DEBUG CWMP] GetParameterNames - host indexes found:', Array.from(hostIndexes), 'yielding', params.length, 'params');
+
+  // WLAN Associated Devices
+  const wlanDevs = new Set<string>(); // format: "wlanIdx_devIdx"
+  const wlanRegex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.WLANConfiguration\.(\d+)\.AssociatedDevice\.(\d+)\.?\s*<\/Name>/g;
+  while ((match = wlanRegex.exec(xmlString)) !== null) {
+    wlanDevs.add(`${match[1]}_${match[2]}`);
+  }
+
+  for (const key of wlanDevs) {
+    const [wlanIdx, devIdx] = key.split('_');
+    params.push(`InternetGatewayDevice.LANDevice.1.WLANConfiguration.${wlanIdx}.AssociatedDevice.${devIdx}.AssociatedDeviceMACAddress`);
+    params.push(`InternetGatewayDevice.LANDevice.1.WLANConfiguration.${wlanIdx}.AssociatedDevice.${devIdx}.AssociatedDeviceIPAddress`);
+  }
+
+  console.log('[DEBUG CWMP] GetParameterNames - Hosts found:', hostIndexes.size, 'WLAN Associated found:', wlanDevs.size, 'yielding total', params.length, 'params');
   return params;
 }
 
 /**
  * Parse hosts dari GetParameterValuesResponse yang berisi host params spesifik.
- * Digunakan pada stage kedua setelah GetParameterNames.
+ * Menggabungkan tabel Hosts.Host. dan WLANConfiguration.i.AssociatedDevice.i.
  */
 export function parseHostsFromGetParameterValues(xmlString: string): any[] {
+  // 1. Parse dari Hosts.Host.
   const hostRegex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
   const hostsMap: Record<string, any> = {};
   let match;
@@ -96,6 +111,7 @@ export function parseHostsFromGetParameterValues(xmlString: string): any[] {
     if (!hostsMap[idx]) hostsMap[idx] = {};
     hostsMap[idx][key] = val;
   }
+  
   const hosts: any[] = [];
   for (const k in hostsMap) {
     if (hostsMap[k].MACAddress) {
@@ -107,7 +123,37 @@ export function parseHostsFromGetParameterValues(xmlString: string): any[] {
       });
     }
   }
-  console.log('[DEBUG CWMP] parseHostsFromGetParameterValues - hosts:', hosts);
+
+  // 2. Parse dari WLANConfiguration.{i}.AssociatedDevice.{i}.
+  const assocRegex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.WLANConfiguration\.(\d+)\.AssociatedDevice\.(\d+)\.(AssociatedDeviceMACAddress|AssociatedDeviceIPAddress)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
+  const assocMap: Record<string, any> = {};
+  while ((match = assocRegex.exec(xmlString)) !== null) {
+    const wlanIdx = match[1];
+    const devIdx = match[2];
+    const key = match[3];
+    const val = match[4].trim();
+    const compositeKey = `${wlanIdx}_${devIdx}`;
+    if (!assocMap[compositeKey]) assocMap[compositeKey] = {};
+    assocMap[compositeKey][key] = val;
+  }
+
+  for (const k in assocMap) {
+    const mac = assocMap[k].AssociatedDeviceMACAddress;
+    if (mac) {
+      const normalizedMac = mac.toLowerCase().replace(/[^a-f0-9]/g, '');
+      const duplicate = hosts.some(h => h.mac.toLowerCase().replace(/[^a-f0-9]/g, '') === normalizedMac);
+      if (!duplicate) {
+        hosts.push({
+          ip: assocMap[k].AssociatedDeviceIPAddress || '',
+          mac: mac,
+          hostname: 'WiFi Client',
+          active: true // Perangkat yang terasosiasi di AP pastilah aktif
+        });
+      }
+    }
+  }
+
+  console.log('[DEBUG CWMP] parseHostsFromGetParameterValues - combined hosts:', hosts.length);
   return hosts;
 }
 

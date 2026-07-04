@@ -388,9 +388,47 @@ const cleanExpiredSessions = () => {
   }
 }
 
-const saveModemDataToDb = async (db: any, session: CwmpSession, params: any, clientIp: string) => {
+const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: any, clientIp: string) => {
   if (session.currentModemSN) {
     try {
+      let hosts = params.connectedHosts || []
+      
+      // Jika ada host terhubung, coba cross-ref dengan DHCP Leases Mikrotik untuk mendapatkan IP Hotspot / Hostname
+      if (hosts.length > 0) {
+        try {
+          const env = await getEnv(c, db).catch(() => ({} as any))
+          const MIKROTIK_IP = env.MIKROTIK_IP
+          const MIKROTIK_USER = env.MIKROTIK_USER
+          const MIKROTIK_PASS = env.MIKROTIK_PASS
+          const MIKROTIK_BRIDGE_URL = env.MIKROTIK_BRIDGE_URL
+
+          if (MIKROTIK_IP) {
+            console.log(`[DB SAVE] Mencoba mencocokkan ${hosts.length} MAC WiFi dengan DHCP leases Mikrotik...`)
+            const leases = await getDhcpLeases(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL).catch(() => [])
+            console.log(`[DB SAVE] DHCP leases ditarik dari Mikrotik: ${leases.length}`)
+            
+            hosts = hosts.map((h: any) => {
+              const normalizedMac = (h.mac || '').toLowerCase().replace(/[^a-f0-9]/g, '')
+              const lease = leases.find((l: any) => {
+                const leaseMac = (l['mac-address'] || '').toLowerCase().replace(/[^a-f0-9]/g, '')
+                return leaseMac === normalizedMac
+              })
+              if (lease) {
+                return {
+                  ...h,
+                  ip: lease.address || h.ip,
+                  hostname: lease['host-name'] || h.hostname || 'WiFi Client',
+                  active: true
+                }
+              }
+              return h
+            })
+          }
+        } catch (err: any) {
+          console.error('[DB SAVE] Gagal cross-ref MAC WiFi ke Mikrotik DHCP leases:', err)
+        }
+      }
+
       const modemParams = stripUndefined({
         snModem: session.currentModemSN || undefined,
         wifiSsid: params.ssid ?? undefined,
@@ -399,7 +437,7 @@ const saveModemDataToDb = async (db: any, session: CwmpSession, params: any, cli
         wifiPassword5g: params.password5g ?? undefined,
         lanStatus: params.lanStatus ?? undefined,
         associatedDevices: params.associatedDevices ?? undefined,
-        connectedHosts: params.connectedHosts ? JSON.stringify(params.connectedHosts) : undefined,
+        connectedHosts: hosts.length > 0 ? JSON.stringify(hosts) : undefined,
         brand: params.brand ?? session.currentManufacturer ?? undefined,
         modelName: params.modelName ?? session.currentModelName ?? undefined,
         hardwareVersion: params.hardwareVersion ?? session.currentHardwareVersion ?? undefined,
@@ -851,7 +889,7 @@ const cwmpHandler = async (c: any) => {
         }
         
         console.log(`[CWMP Stage 1] Mengirim GetParameterNames ke [${clientIp}] untuk mendeteksi host terhubung...`)
-        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.Hosts.Host.', true);
+        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.', false);
         return new Response(responseXml, {
           headers: {
             'Content-Type': 'text/xml',
@@ -866,7 +904,7 @@ const cwmpHandler = async (c: any) => {
         const params = session.pendingModemData || {}
         params.connectedHosts = hosts;
         
-        await saveModemDataToDb(db, session, params, clientIp)
+        await saveModemDataToDb(c, db, session, params, clientIp)
         
         cwmpSessions.delete(clientIp)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
@@ -884,7 +922,7 @@ const cwmpHandler = async (c: any) => {
           const params = session.pendingModemData || {}
           params.connectedHosts = []
           
-          await saveModemDataToDb(db, session, params, clientIp)
+          await saveModemDataToDb(c, db, session, params, clientIp)
           
           cwmpSessions.delete(clientIp)
           return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
@@ -927,7 +965,7 @@ const cwmpHandler = async (c: any) => {
         console.log(`[CWMP] Host list tidak didukung oleh ${clientIp}. Simpan data modem utama tanpa daftar host.`)
         const params = session.pendingModemData || {}
         params.connectedHosts = []
-        await saveModemDataToDb(db, session, params, clientIp)
+        await saveModemDataToDb(c, db, session, params, clientIp)
         cwmpSessions.delete(clientIp)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
