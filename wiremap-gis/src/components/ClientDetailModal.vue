@@ -276,10 +276,18 @@ const resetConfigFormFromDevice = (device = props.device) => {
     pppoeUsername: device?.pppoeUsername || '',
     pppoePassword: '',
     wifiSsid: device?.wifiSsid || '',
-    wifiPassword: device?.wifiPassword || '',
+    wifiPassword: '',
     wifiSsid5g: device?.wifiSsid5g || '',
-    wifiPassword5g: device?.wifiPassword5g || ''
+    wifiPassword5g: ''
   }
+}
+
+const normalizeConfigValue = (value) => String(value ?? '').trim()
+
+const addChangedParam = (params, formValue, currentValue, name) => {
+  const nextValue = normalizeConfigValue(formValue)
+  if (!nextValue || nextValue === normalizeConfigValue(currentValue)) return
+  params.push({ name, value: nextValue, type: 'string' })
 }
 
 watch(() => props.device?.id, () => {
@@ -356,27 +364,36 @@ const handlePushConfig = async () => {
   try {
     const params = []
     
-    if (configForm.value.pppoeUsername) {
-      params.push({ name: 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username', value: configForm.value.pppoeUsername, type: 'string' })
-    }
+    addChangedParam(
+      params,
+      configForm.value.pppoeUsername,
+      props.device?.pppoeUsername,
+      'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username'
+    )
     if (configForm.value.pppoePassword) {
-      params.push({ name: 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password', value: configForm.value.pppoePassword, type: 'string' })
+      params.push({ name: 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password', value: normalizeConfigValue(configForm.value.pppoePassword), type: 'string' })
     }
-    if (configForm.value.wifiSsid) {
-      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID', value: configForm.value.wifiSsid, type: 'string' })
-    }
+    addChangedParam(
+      params,
+      configForm.value.wifiSsid,
+      props.device?.wifiSsid,
+      'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'
+    )
     if (configForm.value.wifiPassword) {
-      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey', value: configForm.value.wifiPassword, type: 'string' })
+      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase', value: normalizeConfigValue(configForm.value.wifiPassword), type: 'string' })
     }
-    if (configForm.value.wifiSsid5g) {
-      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID', value: configForm.value.wifiSsid5g, type: 'string' })
-    }
+    addChangedParam(
+      params,
+      configForm.value.wifiSsid5g,
+      props.device?.wifiSsid5g,
+      'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID'
+    )
     if (configForm.value.wifiPassword5g) {
-      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey', value: configForm.value.wifiPassword5g, type: 'string' })
+      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase', value: normalizeConfigValue(configForm.value.wifiPassword5g), type: 'string' })
     }
 
     if (params.length === 0) {
-      configMessage.value = 'Tidak ada parameter yang diisi.'
+      configMessage.value = 'Tidak ada perubahan untuk dikirim.'
       configProgress.value = 0
       configState.value = 'idle'
       isPushingConfig.value = false
