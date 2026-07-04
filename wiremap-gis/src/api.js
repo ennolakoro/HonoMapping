@@ -241,7 +241,10 @@ export const api = {
       },
       body: JSON.stringify(configData)
     });
-    if (!res.ok) throw new Error('Gagal mengirim konfigurasi ke modem');
-    return res.json();
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.details || data.error || 'Gagal mengirim konfigurasi ke modem');
+    }
+    return data;
   }
 };

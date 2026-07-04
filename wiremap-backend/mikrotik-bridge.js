@@ -190,7 +190,7 @@ app.post('/trigger-modem', async (req, res) => {
                 `Timeout koneksi Mikrotik ${host}:${port} saat trigger modem ${ip}`
             );
 
-            const modemUrl = `http://${ip}:7547/`;
+            const modemUrl = crUrl;
 
             // RouterOS v6: gunakan 'output' bukan 'keep-result'
             await withTimeout(
@@ -201,7 +201,7 @@ app.post('/trigger-modem', async (req, res) => {
                     output: 'none'
                 }),
                 12000,
-                `Timeout /tool fetch ke ${ip}:7547`
+                `Timeout /tool fetch ke ${modemUrl}`
             ).catch((err) => {
                 // Banyak modem hanya perlu dipoke; fetch bisa timeout walau request sudah terkirim.
                 console.warn(`Trigger modem ${ip} selesai dengan warning: ${err.message}`);

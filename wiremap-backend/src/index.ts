@@ -332,6 +332,18 @@ const setProgressForKeys = (keys: string[], progress: SyncProgress) => {
   }
 }
 
+const markPendingConfigFailed = (clientId: number | null | undefined, error: string) => {
+  if (!clientId) return
+  const pendingConfig = pendingConfigs.get(clientId)
+  if (!pendingConfig || pendingConfig.status === 'success') return
+  pendingConfigs.set(clientId, {
+    ...pendingConfig,
+    status: 'failed',
+    error,
+    updatedAt: Date.now()
+  })
+}
+
 const stripUndefined = (record: Record<string, any>) =>
   Object.fromEntries(Object.entries(record).filter(([, value]) => value !== undefined))
 
@@ -393,6 +405,7 @@ const cleanExpiredSessions = () => {
           error: errorMsg,
           updatedAt: now
         })
+        markPendingConfigFailed(progress.id, errorMsg)
       } else {
         syncProgress.delete(ip)
       }
@@ -687,6 +700,14 @@ const cwmpHandler = async (c: any) => {
     if (session) {
       session.currentCwmpId = informData.cwmpId || ''
       session.currentCwmpNamespace = informData.cwmpNamespace || 'urn:dslforum-org:cwmp-1-0'
+      session.currentTriggeredClientId = clientId
+      session.currentProgressKeys = getProgressKeysForClient(clientId, [clientIp, currentClientIp])
+      session.currentClientIp = currentClientIp
+      session.currentModemSN = informData.SerialNumber || session.currentModemSN
+      session.currentManufacturer = informData.manufacturer || session.currentManufacturer
+      session.currentModelName = informData.modelName || session.currentModelName
+      session.currentHardwareVersion = informData.hardwareVersion || session.currentHardwareVersion
+      session.currentSoftwareVersion = informData.softwareVersion || session.currentSoftwareVersion
       session.updatedAt = Date.now()
       cwmpSessions.set(sessionKey, session)
     } else {
@@ -1083,15 +1104,18 @@ const cwmpHandler = async (c: any) => {
       
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
+      const faultString = (bodyText.match(/<FaultString>([^<]+)<\/FaultString>/) || [])[1] || ''
+      const faultMessage = `Fault ${faultCode} dari modem${faultString ? `: ${faultString}` : ''}`
       if (prog) {
         setProgressForKeys(progressKeys, {
           ...prog,
           progress: 100,
           status: 'failed',
-          error: `Fault ${faultCode} dari modem`,
+          error: faultMessage,
           updatedAt: Date.now()
         })
       }
+      markPendingConfigFailed(session.currentTriggeredClientId, faultMessage)
       cwmpSessions.delete(sessionKey)
       return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
     }
@@ -1197,7 +1221,14 @@ app.post('/api/protected/modem/:ip/config', async (c) => {
     const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
     console.log(`[CONFIG] Trigger ${triggered ? 'berhasil' : 'gagal/timeout'} untuk ${clientName}`)
     
-    return c.json({ success: true, message: `Konfigurasi disimpan. Modem ${modemIp} di-trigger untuk menarik konfigurasi.` })
+    return c.json({
+      success: true,
+      queued: true,
+      triggered,
+      message: triggered
+        ? `Konfigurasi masuk antrian. Menunggu modem ${clientName} mengirim Inform untuk menerapkan setting.`
+        : `Konfigurasi masuk antrian, tetapi trigger ke ${clientName} timeout. Sistem tetap menunggu Inform berikutnya dari modem.`
+    })
   } catch (err: any) {
     return c.json({ error: 'Gagal memproses konfigurasi', details: err.message }, 500)
   }

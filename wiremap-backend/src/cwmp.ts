@@ -339,10 +339,17 @@ export function createSetParameterValues(
   cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0', 
   params: { name: string; value: string; type: string }[] = []
 ) {
+  const escapeXml = (value: string) => String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+
   const paramsXml = params.map(p => `
         <ParameterValueStruct>
-          <Name>${p.name}</Name>
-          <Value xsi:type="xsd:${p.type}">${p.value}</Value>
+          <Name>${escapeXml(p.name)}</Name>
+          <Value xsi:type="xsd:${escapeXml(p.type)}">${escapeXml(p.value)}</Value>
         </ParameterValueStruct>`).join('');
 
   return `<?xml version="1.0" encoding="UTF-8"?>
