@@ -89,6 +89,13 @@ export const clients = sqliteTable("clients", {
   lanIp: text("lan_ip"),
   // URL Connection Request CWMP dari Inform modem (untuk direct HTTP trigger)
   connectionRequestUrl: text("connection_request_url"),
+  lastInformAt: text("last_inform_at"),
+  wanConfigJson: text("wan_config_json"),
+  wifiConfigJson: text("wifi_config_json"),
+  adminUsername: text("admin_username"),
+  adminPassword: text("admin_password"),
+  rawModemParamsJson: text("raw_modem_params_json"),
+  modemProfile: text("modem_profile"),
 });
 
 export const settings = sqliteTable("settings", {

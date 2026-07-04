@@ -25,7 +25,36 @@ CREATE TABLE `clients` (
 	`lng` real,
 	`pppoe_username` text,
 	`sn_modem` text,
+	`wifi_ssid` text,
+	`wifi_password` text,
+	`wifi_ssid_5g` text,
+	`wifi_password_5g` text,
+	`lan_status` text,
+	`associated_devices` integer,
+	`connected_hosts` text,
+	`brand` text,
+	`model_name` text,
+	`hardware_version` text,
+	`software_version` text,
+	`mac_address` text,
+	`wan_ip` text,
+	`tx_power` text,
+	`temperature` text,
+	`voltage` text,
+	`rx_power` text,
 	`is_online` integer DEFAULT false,
+	`offline_reason` text,
+	`cable_path` text,
+	`client_type` text DEFAULT 'PPPOE',
+	`lan_ip` text,
+	`connection_request_url` text,
+	`last_inform_at` text,
+	`wan_config_json` text,
+	`wifi_config_json` text,
+	`admin_username` text,
+	`admin_password` text,
+	`raw_modem_params_json` text,
+	`modem_profile` text,
 	FOREIGN KEY (`odp_id`) REFERENCES `devices`(`id`) ON UPDATE no action ON DELETE no action
 );
 --> statement-breakpoint
@@ -37,7 +66,8 @@ CREATE TABLE `devices` (
 	`lat` real,
 	`lng` real,
 	`capacity` integer,
-	`ports_count` integer
+	`ports_count` integer,
+	`cable_path` text
 );
 --> statement-breakpoint
 CREATE TABLE `session` (

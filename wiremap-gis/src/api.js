@@ -162,6 +162,66 @@ export const api = {
     return res.json();
   },
 
+  async getClients(search = '') {
+    const suffix = search ? `?search=${encodeURIComponent(search)}` : '';
+    const res = await fetch(`${API_URL}/protected/clients${suffix}`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    if (!res.ok) throw new Error('Gagal mengambil daftar client');
+    return res.json();
+  },
+
+  async getClientDetail(id) {
+    const res = await fetch(`${API_URL}/protected/clients/${id}/detail`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal mengambil detail client');
+    return data;
+  },
+
+  async informClient(id) {
+    const res = await fetch(`${API_URL}/protected/clients/${id}/inform`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal trigger inform client');
+    return data;
+  },
+
+  async discoverClientWan(id) {
+    const res = await fetch(`${API_URL}/protected/clients/${id}/discover-wan`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal discovery WAN');
+    return data;
+  },
+
+  async saveClientAdminConfig(id, payload) {
+    const res = await fetch(`${API_URL}/protected/clients/${id}/admin-config`, {
+      method: 'PATCH',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal menyimpan admin config');
+    return data;
+  },
+
   async getSettings() {
     const res = await fetch(`${API_URL}/protected/settings`, {
       headers: {

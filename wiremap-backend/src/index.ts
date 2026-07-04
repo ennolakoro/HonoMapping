@@ -3,7 +3,7 @@ import crypto from 'crypto'
 import { cors } from 'hono/cors'
 import { getDb } from './db'
 import { devices, session as sessionTable, user as userTable } from './db/schema'
-import { eq, and, ne, isNull } from 'drizzle-orm'
+import { eq, and, ne, isNull, sql } from 'drizzle-orm'
 
 
 // Environment bindings untuk Cloudflare Workers
@@ -24,6 +24,7 @@ const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 let lastGarbageCleanupAt = 0
 const GARBAGE_CLEANUP_INTERVAL_MS = 60000
+let clientInventoryColumnsReady = false
 
 
 app.use('*', cors())
@@ -31,6 +32,31 @@ app.use('*', cors())
 app.get('/', (c) => {
   return c.text('WireMap GIS API Server (Hono + Turso) is Running!')
 })
+
+const ensureClientInventoryColumns = async (db: any) => {
+  if (clientInventoryColumnsReady) return
+  const columns = [
+    ['last_inform_at', 'text'],
+    ['wan_config_json', 'text'],
+    ['wifi_config_json', 'text'],
+    ['admin_username', 'text'],
+    ['admin_password', 'text'],
+    ['raw_modem_params_json', 'text'],
+    ['modem_profile', 'text'],
+  ]
+
+  for (const [name, type] of columns) {
+    try {
+      await db.run(sql.raw(`ALTER TABLE clients ADD COLUMN ${name} ${type}`))
+    } catch (err: any) {
+      const message = String(err?.message || err)
+      if (!/duplicate column|already exists/i.test(message)) {
+        console.warn(`[DB] Gagal memastikan kolom clients.${name}: ${message}`)
+      }
+    }
+  }
+  clientInventoryColumnsReady = true
+}
 
 // Middleware proteksi endpoint
 app.use('/api/protected/*', async (c, next) => {
@@ -100,7 +126,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues } from './cwmp'
+import { buildParameterRequestList, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -270,6 +296,7 @@ interface CwmpSession {
   currentModelName: string | null;
   currentHardwareVersion: string | null;
   currentSoftwareVersion: string | null;
+  currentModemProfile: string | null;
   gponFaultRetried: boolean;
   updatedAt: number;
   // Multi-stage host fetching
@@ -433,6 +460,7 @@ const cleanExpiredSessions = () => {
 const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: any, clientIp: string) => {
   if (session.currentModemSN) {
     try {
+      await ensureClientInventoryColumns(db)
       let hosts = params.connectedHosts || []
       
       // Jika ada host terhubung, coba cross-ref dengan DHCP Leases Mikrotik untuk mendapatkan IP Hotspot / Hostname
@@ -490,7 +518,12 @@ const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: 
         rxPower: params.rxPower ?? undefined,
         txPower: params.txPower ?? undefined,
         temperature: params.temperature ?? undefined,
-        voltage: params.voltage ?? undefined
+        voltage: params.voltage ?? undefined,
+        lastInformAt: new Date().toISOString(),
+        wanConfigJson: params.wanConfig ? JSON.stringify(params.wanConfig) : undefined,
+        wifiConfigJson: params.wifiConfig ? JSON.stringify(params.wifiConfig) : undefined,
+        rawModemParamsJson: params.rawParams ? JSON.stringify(params.rawParams) : undefined,
+        modemProfile: session.currentModemProfile ?? undefined
       })
 
       let updatedRows: { id: number }[] = []
@@ -555,6 +588,7 @@ const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: 
 const cwmpHandler = async (c: any) => {
   const bodyText = await c.req.text()
   const db = getDb(c.env)
+  await ensureClientInventoryColumns(db)
   const clientIp = getClientIp(c)
   
   cleanExpiredSessions()
@@ -651,6 +685,8 @@ const cwmpHandler = async (c: any) => {
         hardwareVersion: informData.hardwareVersion || undefined,
         softwareVersion: informData.softwareVersion || undefined,
         connectionRequestUrl: informData.connectionRequestUrl || undefined,
+        lastInformAt: new Date().toISOString(),
+        modemProfile: informData.rootDataModel || undefined,
       }
 
       // Lindungi wanIp / lanIp agar tidak ter-NAT menjadi IP Publik yang sama.
@@ -679,6 +715,8 @@ const cwmpHandler = async (c: any) => {
           modelName: informData.modelName || null,
           hardwareVersion: informData.hardwareVersion || null,
           softwareVersion: informData.softwareVersion || null,
+          lastInformAt: new Date().toISOString(),
+          modemProfile: informData.rootDataModel || null,
           lat: null,
           lng: null,
           odpId: null
@@ -725,104 +763,12 @@ const cwmpHandler = async (c: any) => {
       session.currentModelName = informData.modelName || session.currentModelName
       session.currentHardwareVersion = informData.hardwareVersion || session.currentHardwareVersion
       session.currentSoftwareVersion = informData.softwareVersion || session.currentSoftwareVersion
+      session.currentModemProfile = informData.rootDataModel || session.currentModemProfile
       session.updatedAt = Date.now()
       cwmpSessions.set(sessionKey, session)
     } else {
-      const isHuawei = informData.manufacturer?.toLowerCase().includes('huawei') || 
-                       informData.SerialNumber?.toUpperCase().startsWith('485754') || 
-                       informData.SerialNumber?.toUpperCase().startsWith('HWTC')
-      const isZte = informData.manufacturer?.toLowerCase().includes('zte') || 
-                    informData.SerialNumber?.toUpperCase().startsWith('5A5445') || 
-                    informData.SerialNumber?.toUpperCase().startsWith('ZTEG')
-      const isFiberhome = informData.manufacturer?.toLowerCase().includes('fiberhome') || 
-                          informData.SerialNumber?.toUpperCase().startsWith('464854')
-      const isNokia = informData.manufacturer?.toLowerCase().includes('nokia') || 
-                      informData.manufacturer?.toLowerCase().includes('alcatel')
-      const isVsol = informData.manufacturer?.toLowerCase().includes('vsol') || 
-                     informData.manufacturer?.toLowerCase().includes('v-sol')
-
-      let paramsToReq: string[] = []
-      
-      const baseWlanParams = [
-        'InternetGatewayDevice.DeviceInfo.Manufacturer',
-        'InternetGatewayDevice.DeviceInfo.ModelName',
-        'InternetGatewayDevice.DeviceInfo.ProductClass',
-        'InternetGatewayDevice.DeviceInfo.HardwareVersion',
-        'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
-        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
-        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
-        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
-        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
-        'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
-      ]
-
-      if (isHuawei) {
-        paramsToReq = [
-          ...baseWlanParams,
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage',
-        ]
-      } else if (isZte) {
-        paramsToReq = [
-          ...baseWlanParams,
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage',
-        ]
-      } else if (isFiberhome) {
-        paramsToReq = [
-          ...baseWlanParams,
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.TxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.Temperature',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.SupplyVoltage',
-        ]
-      } else if (isNokia) {
-        paramsToReq = [
-          ...baseWlanParams,
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.TxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.Temperature',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.SupplyVoltage',
-        ]
-      } else if (isVsol) {
-        paramsToReq = [
-          ...baseWlanParams,
-          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature',
-          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage',
-        ]
-      } else {
-        paramsToReq = [
-          ...baseWlanParams,
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature',
-          'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
-          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower',
-        ]
-      }
+      const paramsToReq = buildParameterRequestList(informData.manufacturer, informData.SerialNumber, informData.rootDataModel)
+      console.log(`[CWMP] Profile ${informData.rootDataModel || 'InternetGatewayDevice'} untuk ${informData.manufacturer || informData.SerialNumber || clientName}: ${paramsToReq.length} parameter`)
  
       const progressKeys = getProgressKeysForClient(clientId, [clientIp, currentClientIp])
 
@@ -839,6 +785,7 @@ const cwmpHandler = async (c: any) => {
         currentModelName: informData.modelName || null,
         currentHardwareVersion: informData.hardwareVersion || null,
         currentSoftwareVersion: informData.softwareVersion || null,
+        currentModemProfile: informData.rootDataModel || null,
         gponFaultRetried: false,
         updatedAt: Date.now(),
         stage: 'params',
@@ -1015,7 +962,10 @@ const cwmpHandler = async (c: any) => {
           })
         }
         
-        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.', false);
+        const hostRootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.'))
+          ? 'Device.'
+          : 'InternetGatewayDevice.LANDevice.1.'
+        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, hostRootPath, false);
         return new Response(responseXml, {
           headers: {
             'Content-Type': 'text/xml',
@@ -1091,26 +1041,7 @@ const cwmpHandler = async (c: any) => {
         session.updatedAt = Date.now()
         cwmpSessions.set(sessionKey, session)
         
-        const baseParams = [
-          'InternetGatewayDevice.DeviceInfo.Manufacturer',
-          'InternetGatewayDevice.DeviceInfo.ModelName',
-          'InternetGatewayDevice.DeviceInfo.ProductClass',
-          'InternetGatewayDevice.DeviceInfo.HardwareVersion',
-          'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
-          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
-        ];
-        const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, baseParams);
+        const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, igdBaseParams);
         return new Response(retryXml, {
           headers: {
             'Content-Type': 'text/xml',
@@ -1342,10 +1273,185 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
   }
 })
 
+const safeParseJson = (value: any, fallback: any) => {
+  if (!value) return fallback
+  try {
+    return typeof value === 'string' ? JSON.parse(value) : value
+  } catch {
+    return fallback
+  }
+}
+
+const getClientTriggerIpFromRow = (client: any) => {
+  const safeWanIp = client.wanIp && !isPublicIp(client.wanIp) ? client.wanIp : null
+  return client.lanIp || safeWanIp || null
+}
+
+const toClientInventoryDto = (client: any, activeByUsername: Map<string, any> = new Map()) => {
+  const active = client.pppoeUsername ? activeByUsername.get(client.pppoeUsername) : null
+  const safeWanIp = client.wanIp && !isPublicIp(client.wanIp) ? client.wanIp : null
+  return {
+    id: client.id,
+    pseudoId: client.id + 1000000,
+    name: client.name,
+    phone: client.phone,
+    status: client.isOnline ? 'ONLINE' : 'OFFLINE',
+    isOnline: client.isOnline,
+    pppoeUsername: client.pppoeUsername,
+    rxPower: client.rxPower,
+    uptime: active?.uptime || active?.['uptime'] || null,
+    wanIp: safeWanIp || active?.address || active?.['remote-address'] || null,
+    lanIp: client.lanIp,
+    triggerIp: getClientTriggerIpFromRow(client),
+    snModem: client.snModem,
+    product: client.modelName || client.brand || null,
+    brand: client.brand,
+    modelName: client.modelName,
+    softwareVersion: client.softwareVersion,
+    hardwareVersion: client.hardwareVersion,
+    macAddress: client.macAddress,
+    lastInformAt: client.lastInformAt,
+    modemProfile: client.modemProfile,
+    clientType: client.clientType || 'PPPOE',
+    wifiSsid: client.wifiSsid,
+    wifiPassword: client.wifiPassword,
+    wifiSsid5g: client.wifiSsid5g,
+    wifiPassword5g: client.wifiPassword5g,
+    wifiConfig: safeParseJson(client.wifiConfigJson, null),
+    wanConfig: safeParseJson(client.wanConfigJson, []),
+    connectedHosts: safeParseJson(client.connectedHosts, []),
+    adminUsername: client.adminUsername,
+    adminPassword: client.adminPassword,
+  }
+}
+
+const getActivePppoeMap = async (c: any, db: any) => {
+  const map = new Map<string, any>()
+  try {
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
+    if (!MIKROTIK_IP) return map
+    const active = await getPppoeActive(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL)
+    for (const row of active || []) {
+      const username = row.name || row.user || row.username
+      if (username) map.set(username, row)
+    }
+  } catch (err: any) {
+    console.warn('[Clients] Gagal enrich uptime PPPoE:', err.message || err)
+  }
+  return map
+}
+
+app.get('/api/protected/clients', async (c) => {
+  try {
+    const db = getDb(c.env)
+    await ensureClientInventoryColumns(db)
+    const search = (c.req.query('search') || '').trim().toLowerCase()
+    const activeByUsername = await getActivePppoeMap(c, db)
+    const rows = await db.select().from(clients)
+    const filtered = search
+      ? rows.filter((client: any) =>
+          [client.name, client.pppoeUsername, client.wanIp, client.lanIp, client.snModem, client.modelName]
+            .some(value => String(value || '').toLowerCase().includes(search))
+        )
+      : rows
+    return c.json(filtered.map((client: any) => toClientInventoryDto(client, activeByUsername)))
+  } catch (err: any) {
+    return c.json({ error: 'Gagal mengambil daftar client', details: err.message }, 500)
+  }
+})
+
+app.get('/api/protected/clients/:id/detail', async (c) => {
+  try {
+    const db = getDb(c.env)
+    await ensureClientInventoryColumns(db)
+    const id = parseInt(c.req.param('id'), 10)
+    const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
+    if (!rows[0]) return c.json({ error: 'Client tidak ditemukan' }, 404)
+    const activeByUsername = await getActivePppoeMap(c, db)
+    return c.json({
+      ...toClientInventoryDto(rows[0], activeByUsername),
+      rawModemParams: safeParseJson((rows[0] as any).rawModemParamsJson, {}),
+    })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal mengambil detail client', details: err.message }, 500)
+  }
+})
+
+const triggerClientInformById = async (c: any, mode: 'inform' | 'discover-wan') => {
+  const db = getDb(c.env)
+  await ensureClientInventoryColumns(db)
+  const id = parseInt(c.req.param('id'), 10)
+  const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
+  const client = rows[0] as any
+  if (!client) return c.json({ error: 'Client tidak ditemukan' }, 404)
+  const modemIp = getClientTriggerIpFromRow(client)
+  if (!modemIp) return c.json({ error: 'IP management modem belum tersedia' }, 400)
+  const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
+  const connectionRequestUrl = client.connectionRequestUrl || modemConnectionUrls.get(modemIp) || null
+  syncProgress.set(modemIp, {
+    id,
+    username: client.name,
+    progress: 10,
+    status: 'triggered',
+    updatedAt: Date.now()
+  })
+  syncProgress.set(String(id), {
+    id,
+    username: client.name,
+    progress: 10,
+    status: 'triggered',
+    updatedAt: Date.now()
+  })
+  const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+  return c.json({
+    success: true,
+    mode,
+    triggered,
+    message: mode === 'discover-wan'
+      ? 'Discovery WAN dikirim. Menunggu modem Inform dan mengirim parameter WAN.'
+      : 'Inform dikirim. Menunggu modem mengirim data terbaru.'
+  })
+}
+
+app.post('/api/protected/clients/:id/inform', async (c) => {
+  try {
+    return await triggerClientInformById(c, 'inform')
+  } catch (err: any) {
+    return c.json({ error: 'Gagal trigger Inform client', details: err.message }, 500)
+  }
+})
+
+app.post('/api/protected/clients/:id/discover-wan', async (c) => {
+  try {
+    return await triggerClientInformById(c, 'discover-wan')
+  } catch (err: any) {
+    return c.json({ error: 'Gagal discovery WAN', details: err.message }, 500)
+  }
+})
+
+app.patch('/api/protected/clients/:id/admin-config', async (c) => {
+  try {
+    const db = getDb(c.env)
+    await ensureClientInventoryColumns(db)
+    const id = parseInt(c.req.param('id'), 10)
+    const body = await c.req.json()
+    await db.update(clients)
+      .set({
+        adminUsername: body.username || null,
+        adminPassword: body.password || null,
+      })
+      .where(eq(clients.id, id))
+    return c.json({ success: true })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal menyimpan admin config', details: err.message }, 500)
+  }
+})
+
 // Endpoint Topologi
 app.get('/api/protected/devices', async (c) => {
   try {
     const db = getDb(c.env)
+    await ensureClientInventoryColumns(db)
     await cleanupOldGarbageData(db)
     const allDevices = await db.select().from(devices)
     const allClients = await db.select().from(clients)
@@ -1390,7 +1496,13 @@ app.get('/api/protected/devices', async (c) => {
         voltage: client.voltage,
         isOnline: client.isOnline,
         offlineReason: client.offlineReason,
-        cablePath: client.cablePath
+        cablePath: client.cablePath,
+        lastInformAt: (client as any).lastInformAt,
+        modemProfile: (client as any).modemProfile,
+        wanConfig: safeParseJson((client as any).wanConfigJson, []),
+        wifiConfig: safeParseJson((client as any).wifiConfigJson, null),
+        adminUsername: (client as any).adminUsername,
+        adminPassword: (client as any).adminPassword
       }
     })
 

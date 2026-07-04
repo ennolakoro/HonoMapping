@@ -4,6 +4,7 @@ import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 import { api } from '../api'
 import ClientDetailModal from './ClientDetailModal.vue'
+import ClientInventoryModal from './ClientInventoryModal.vue'
 import { store } from '../store'
 
 const mapContainer = ref(null)
@@ -28,6 +29,7 @@ const syncStatus = ref('')
 const informStatus = ref('')
 const isInformingAll = ref(false)
 const isWorkflowOpen = ref(false)
+const isClientInventoryOpen = ref(false)
 const workflowSearch = ref('')
 // Filter status plotting: 'UNMAPPED' | 'PLOTTED'
 const queuePlotFilter = ref('UNMAPPED')
@@ -1634,6 +1636,14 @@ watch(allDevicesData, (newData) => {
           </button>
           <button 
             type="button"
+            @click="isClientInventoryOpen = true" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 bg-transparent text-slate-700 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+          >
+            <span class="material-symbols-outlined text-[14px]">manage_accounts</span>
+            Daftar Client
+          </button>
+          <button 
+            type="button"
             @click="isWorkflowOpen = true" 
             class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 bg-transparent text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 relative cursor-pointer"
           >
@@ -2119,6 +2129,10 @@ watch(allDevicesData, (newData) => {
       @delete-device="deleteDevice"
       @close="isClientModalOpen = false"
       @start-polling="startProgressPolling"
+    />
+    <ClientInventoryModal
+      :is-open="isClientInventoryOpen"
+      @close="isClientInventoryOpen = false"
     />
   </div>
 </template>
