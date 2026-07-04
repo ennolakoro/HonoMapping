@@ -1,5 +1,5 @@
 import { drizzle } from 'drizzle-orm/libsql';
-import { createClient } from '@libsql/client';
+import { createClient } from '@libsql/client/web';
 import * as schema from './schema';
 
 export function getDb(env?: { TURSO_DATABASE_URL?: string; TURSO_AUTH_TOKEN?: string }) {

@@ -5,6 +5,7 @@ import { getDb } from './db'
 import { devices, session as sessionTable, user as userTable } from './db/schema'
 import { eq, and, ne, isNull } from 'drizzle-orm'
 
+
 // Environment bindings untuk Cloudflare Workers
 type Bindings = {
   TURSO_DATABASE_URL: string
@@ -99,7 +100,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { createInformResponse, createGetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
+import { createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -650,7 +651,7 @@ const cwmpHandler = async (c: any) => {
       session.updatedAt = Date.now()
       cwmpSessions.set(clientIp, session)
 
-      if (pendingConfig && pendingConfig.status === 'pending') {
+      if (clientId && pendingConfig && pendingConfig.status === 'pending') {
         console.log(`Menerima Empty POST dari ${clientIp}, mengirim SetParameterValues dengan ID: ${session.currentCwmpId}...`)
         
         pendingConfig.status = 'success';
@@ -668,7 +669,6 @@ const cwmpHandler = async (c: any) => {
           })
         }
 
-        const { createSetParameterValues } = require('./cwmp');
         const responseXml = createSetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, pendingConfig.params);
         return new Response(responseXml, {
           headers: {

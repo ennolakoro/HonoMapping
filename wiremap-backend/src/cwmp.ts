@@ -133,26 +133,6 @@ export function parseGetParameterValuesResponse(xmlString: string) {
   }
   const lanStatus = lanPorts.length > 0 ? lanPorts.join(', ') : null;
 
-export function parseGetParameterValuesResponse(xmlString: string) {
-  const getParameterValue = (xml: string, paramName: string) => {
-    // Regex mencari blok Name-Value di ParameterValueStruct, mengabaikan namespace/prefix
-    const regex = new RegExp(`<Name>${paramName.replace(/\./g, '\\.')}</Name>\\s*<Value[^>]*>(.*?)</Value>`);
-    const match = xml.match(regex);
-    return match ? match[1] : null;
-  };
-
-  // LAN Ports Status Summary (LAN 1 - LAN 4)
-  const lanPorts: string[] = [];
-  for (let i = 1; i <= 4; i++) {
-    const status = getParameterValue(xmlString, `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${i}.Status`);
-    const speed = getParameterValue(xmlString, `InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.${i}.MaxBitRate`);
-    if (status) {
-      const speedStr = speed && speed !== '0' && speed !== '-1' ? `${speed}Mbps` : '';
-      lanPorts.push(`LAN${i}:${status}${speedStr ? `(${speedStr})` : ''}`);
-    }
-  }
-  const lanStatus = lanPorts.length > 0 ? lanPorts.join(', ') : null;
-
   // Associated Devices Sum (WLAN 2.4G + 5G)
   const assoc24 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations') || '0', 10);
   const assoc50 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations') || '0', 10);
