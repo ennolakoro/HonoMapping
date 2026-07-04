@@ -29,7 +29,7 @@ onUnmounted(() => {
   window.removeEventListener('customer-queue-count', handleQueueCount)
 })
 
-const checkConnectionSettings = async (isSaveEvent = false) => {
+const checkConnectionSettings = async () => {
   try {
     isValidatingSettings.value = true
     const settings = await api.getSettings()
@@ -37,10 +37,9 @@ const checkConnectionSettings = async (isSaveEvent = false) => {
       isRouterModalOpen.value = true
       isRouterConfigured.value = false
     } else {
-      isRouterConfigured.value = true
-      if (isSaveEvent !== true) {
-        isRouterModalOpen.value = false
-      }
+      // Jika sudah ada konfigurasi yang tersimpan, biarkan peta kosong secara default saat login
+      isRouterConfigured.value = false
+      isRouterModalOpen.value = false
     }
   } catch (err) {
     if (err.message === 'Sesi berakhir' || err.message?.includes('Unauthorized')) {
@@ -150,12 +149,19 @@ const handleSaveDevice = async (deviceData) => {
       </div>
 
       <LeafletMap v-else-if="isRouterConfigured" class="flex-1" />
-      <div v-else class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white gap-4 p-6">
-        <span class="material-symbols-outlined text-6xl text-blue-500 animate-pulse">settings_ethernet</span>
-        <h2 class="text-xl font-bold">Konfigurasi Router API Diperlukan</h2>
-        <p class="text-slate-400 text-center max-w-md text-sm leading-relaxed">Anda harus mengisi kredensial API Mikrotik terlebih dahulu sebelum dapat mengakses peta GIS dan memproses data topologi pelanggan.</p>
-        <button @click="isRouterModalOpen = true" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg font-bold shadow-md transition-all cursor-pointer">
-          Buka Konfigurasi Router
+      <div v-else class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white gap-6 p-6">
+        <div class="relative flex items-center justify-center w-20 h-20 bg-blue-500 bg-opacity-10 rounded-full border border-blue-500 border-opacity-20 shadow-inner">
+          <span class="material-symbols-outlined text-4xl text-blue-500 animate-pulse">settings_ethernet</span>
+        </div>
+        <div class="text-center max-w-md">
+          <h2 class="text-xl font-bold tracking-tight">WireMap GIS Dashboard</h2>
+          <p class="text-slate-400 text-xs mt-2 leading-relaxed">
+            Peta topologi dinonaktifkan secara default saat Anda login. Silakan kelola konfigurasi Router API Anda untuk memuat visualisasi rute kabel secara real-time.
+          </p>
+        </div>
+        <button @click="isRouterModalOpen = true" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2.5 rounded-xl shadow-lg transition-all flex items-center gap-2 border-0 cursor-pointer text-xs">
+          <span class="material-symbols-outlined text-xs">settings_ethernet</span>
+          Kelola Konfigurasi Router
         </button>
       </div>
     </main>
@@ -165,7 +171,9 @@ const handleSaveDevice = async (deviceData) => {
     <RouterConfigModal
       :is-open="isRouterModalOpen"
       @close="isRouterModalOpen = false"
-      @saved="checkConnectionSettings(true)"
+      @saved="checkConnectionSettings"
+      @open-map="isRouterConfigured = true"
+      @settings-deleted="isRouterConfigured = false"
     />
   </template>
 </template>
