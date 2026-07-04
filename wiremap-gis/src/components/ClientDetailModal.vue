@@ -40,8 +40,8 @@ watch(() => props.device, (device) => {
     phone: device.phone || '',
     pppoeUsername: device.pppoeUsername || '',
     snModem: device.snModem || '',
-    lat: device.lat || 0,
-    lng: device.lng || 0,
+    lat: device.lat ? parseFloat(Number(device.lat).toFixed(6)) : 0,
+    lng: device.lng ? parseFloat(Number(device.lng).toFixed(6)) : 0,
     capacity: device.capacity || '',
     portsCount: device.portsCount || ''
   }
@@ -387,31 +387,30 @@ const handlePushConfig = async () => {
       </header>
 
       <div class="detail-body">
-        <section v-if="device?.type === 'CLIENT'" class="status-card">
-          <div class="section-title-row">
-            <div>
-              <span class="section-eyebrow">ACS Status</span>
-              <h3>Parameter Modem</h3>
-            </div>
-            <span v-if="device?.type === 'CLIENT'" class="status-pill" :class="statusTone">
-              {{ hasSavedModemData ? 'Tersimpan' : 'Belum inform' }}
+        <!-- Status Online Client -->
+        <div v-if="device?.type === 'CLIENT'" class="flex items-center justify-between mx-4 mt-2 mb-1.5 text-[11px] font-bold">
+          <span class="text-slate-400">Status Koneksi</span>
+          <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }" class="uppercase font-black tracking-wider">
+            ● {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
+          </strong>
+        </div>
+
+        <!-- Compact Alur Topologi Diagram -->
+        <div v-if="devicePath && devicePath.length" class="flex items-center flex-wrap gap-1 bg-white/5 border border-white/10 rounded-lg p-2.5 mb-4 text-[10px] text-slate-300 mx-4 mt-2">
+          <span class="font-bold text-slate-400 mr-1 select-none flex items-center gap-0.5">
+            <span class="material-symbols-outlined text-[12px] text-primary">account_tree</span>
+            Topologi:
+          </span>
+          <template v-for="(node, index) in devicePath" :key="node.id">
+            <span 
+              class="font-black px-1.5 py-0.5 rounded text-[9px] cursor-pointer hover:bg-white/20 transition-all"
+              :class="node.id === device?.id ? 'bg-primary text-white' : 'bg-white/10 text-slate-300'"
+            >
+              {{ node.name }}
             </span>
-          </div>
-
-          <div class="metric-grid">
-            <div v-for="item in metricItems" :key="item.label" class="metric-card">
-              <span>{{ item.label }}</span>
-              <strong :class="item.className">{{ item.value }}</strong>
-            </div>
-          </div>
-
-          <div class="status-line">
-            <span>Status</span>
-            <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }">
-              {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
-            </strong>
-          </div>
-        </section>
+            <span v-if="index < devicePath.length - 1" class="text-slate-500 font-bold mx-0.5 select-none">➔</span>
+          </template>
+        </div>
 
         <section v-if="device?.type === 'CLIENT'" class="detail-card">
           <div class="section-title-row compact">
@@ -424,28 +423,20 @@ const handlePushConfig = async () => {
             </span>
           </div>
 
-          <form @submit.prevent="handleSaveDetails" class="customer-form">
-            <label class="form-field full">
-              <span>Nama</span>
-              <input v-model="detailForm.name" required />
-            </label>
+          <form @submit.prevent="handleSaveDetails" class="flex flex-col gap-2.5 mt-3">
+            <div class="flex items-center text-[10px] gap-2">
+              <span class="w-24 text-slate-400 font-bold text-left">Nama:</span>
+              <input v-model="detailForm.name" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+            </div>
 
-            <label class="form-field full">
-              <span>No. WA</span>
-              <input v-model="detailForm.phone" placeholder="08xxxxxxxxxx" />
-            </label>
+            <div class="flex items-center text-[10px] gap-2">
+              <span class="w-24 text-slate-400 font-bold text-left">Nomor Wa:</span>
+              <input v-model="detailForm.phone" placeholder="08xxxxxxxxxx" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+            </div>
 
-            <label class="form-field">
-              <span>PPPoE</span>
-              <input v-model="detailForm.pppoeUsername" />
-            </label>
 
-            <label class="form-field">
-              <span>SN Modem</span>
-              <input v-model="detailForm.snModem" class="mono" />
-            </label>
 
-            <button type="submit" :disabled="isSavingDetails" class="save-button">
+            <button type="submit" :disabled="isSavingDetails" class="save-button mt-2">
               <span v-if="isSavingDetails" class="material-symbols-outlined spin">refresh</span>
               <span v-else class="material-symbols-outlined">save</span>
               Simpan Perubahan
@@ -469,39 +460,39 @@ const handlePushConfig = async () => {
             <span v-if="configMessage" class="save-message mb-3" :class="{ 'is-error': configMessage.startsWith('Gagal') }">
               {{ configMessage }}
             </span>
-            <form @submit.prevent="handlePushConfig" class="customer-form">
-              <label class="form-field full">
-                <span>PPPoE Username</span>
-                <input v-model="configForm.pppoeUsername" placeholder="username@isp" />
-              </label>
-              <label class="form-field full">
-                <span>PPPoE Password</span>
-                <input v-model="configForm.pppoePassword" type="password" placeholder="Biarkan kosong jika tidak diubah" />
-              </label>
+            <form @submit.prevent="handlePushConfig" class="flex flex-col gap-2.5 mt-3">
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-32 text-slate-400 font-bold text-left">PPPoE Username:</span>
+                <input v-model="configForm.pppoeUsername" placeholder="username@isp" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-32 text-slate-400 font-bold text-left">PPPoE Password:</span>
+                <input v-model="configForm.pppoePassword" type="password" placeholder="Biarkan kosong jika tidak diubah" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
               
-              <div class="divider-line"></div>
+              <div class="divider-line my-1.5"></div>
               
-              <label class="form-field full">
-                <span>SSID 2.4GHz</span>
-                <input v-model="configForm.wifiSsid" placeholder="Nama WiFi 2.4G" />
-              </label>
-              <label class="form-field full">
-                <span>Password 2.4GHz</span>
-                <input v-model="configForm.wifiPassword" type="text" placeholder="Biarkan kosong jika tidak diubah" />
-              </label>
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-32 text-slate-400 font-bold text-left">SSID 2.4GHz:</span>
+                <input v-model="configForm.wifiSsid" placeholder="Nama WiFi 2.4G" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-32 text-slate-400 font-bold text-left">Password 2.4GHz:</span>
+                <input v-model="configForm.wifiPassword" type="text" placeholder="Biarkan kosong jika tidak diubah" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
 
-              <label class="form-field full">
-                <span>SSID 5GHz</span>
-                <input v-model="configForm.wifiSsid5g" placeholder="Nama WiFi 5G" />
-              </label>
-              <label class="form-field full">
-                <span>Password 5GHz</span>
-                <input v-model="configForm.wifiPassword5g" type="text" placeholder="Biarkan kosong jika tidak diubah" />
-              </label>
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-32 text-slate-400 font-bold text-left">SSID 5GHz:</span>
+                <input v-model="configForm.wifiSsid5g" placeholder="Nama WiFi 5G" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-32 text-slate-400 font-bold text-left">Password 5GHz:</span>
+                <input v-model="configForm.wifiPassword5g" type="text" placeholder="Biarkan kosong jika tidak diubah" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
 
-              <button type="submit" :disabled="isPushingConfig" class="save-button push-btn mt-3">
-                <span v-if="isPushingConfig" class="material-symbols-outlined spin">refresh</span>
-                <span v-else class="material-symbols-outlined">send</span>
+              <button type="submit" :disabled="isPushingConfig" class="save-button push-btn mt-3 text-[10px]">
+                <span v-if="isPushingConfig" class="material-symbols-outlined spin text-[12px]">refresh</span>
+                <span v-else class="material-symbols-outlined text-[12px]">send</span>
                 Push ke Modem (TR-069)
               </button>
             </form>
@@ -513,22 +504,22 @@ const handlePushConfig = async () => {
           <div class="card-heading split">
             <div>
               <span class="material-symbols-outlined">hub</span>
-              <h3>Node {{ device?.type }}</h3>
+              <h3>{{ device?.type }}</h3>
             </div>
             <span v-if="saveMessage" class="save-message" :class="{ 'is-error': saveMessage.startsWith('Gagal') }">
               {{ saveMessage }}
             </span>
           </div>
 
-          <form @submit.prevent="handleSaveDetails" class="node-form">
-            <label class="form-field full">
-              <span>Nama Node</span>
-              <input v-model="detailForm.name" required />
-            </label>
+          <form @submit.prevent="handleSaveDetails" class="flex flex-col gap-2.5 mt-3 text-[10px]">
+            <div class="flex items-center gap-2">
+              <span class="w-20 text-slate-400 font-bold text-left">Nama:</span>
+              <input v-model="detailForm.name" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+            </div>
             
-            <label class="form-field full">
-              <span>Uplink (Route)</span>
-              <div class="route-editor-modern">
+            <div class="flex items-center gap-2">
+              <span class="w-20 text-slate-400 font-bold text-left">Uplink:</span>
+              <div class="flex-1 route-editor-modern">
                 <select v-model="routeParentId" @change="handleSaveRoute">
                   <option value="">Tanpa uplink</option>
                   <option v-for="parent in compatibleParents" :key="parent.id" :value="parent.id">
@@ -539,28 +530,29 @@ const handlePushConfig = async () => {
                   <span class="material-symbols-outlined">link_off</span>
                 </button>
               </div>
-            </label>
-            <div v-if="routeMessage" class="route-message" :class="{ 'is-error': routeMessage.startsWith('Gagal') }">
+            </div>
+            <div v-if="routeMessage" class="route-message mt-1" :class="{ 'is-error': routeMessage.startsWith('Gagal') }">
               {{ routeMessage }}
             </div>
 
-            <button type="submit" :disabled="isSavingDetails" class="save-button compact-btn">
-              <span v-if="isSavingDetails" class="material-symbols-outlined spin">refresh</span>
-              <span v-else class="material-symbols-outlined">save</span>
-              Simpan Nama
+            <div class="flex items-center gap-2">
+              <span class="w-20 text-slate-400 font-bold text-left">Lat:</span>
+              <input v-model.number="detailForm.lat" type="number" step="any" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none font-mono transition-all" />
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="w-20 text-slate-400 font-bold text-left">Long:</span>
+              <input v-model.number="detailForm.lng" type="number" step="any" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none font-mono transition-all" />
+            </div>
+
+            <button type="submit" :disabled="isSavingDetails" class="save-button mt-2 text-[10px]">
+              <span v-if="isSavingDetails" class="material-symbols-outlined spin text-[12px]">refresh</span>
+              <span v-else class="material-symbols-outlined text-[12px]">save</span>
+              Simpan
             </button>
           </form>
 
-          <div class="info-list compact-info mt-4">
-            <div class="info-row"><span>Lat</span><strong class="mono">{{ displayValue(device?.lat) }}</strong></div>
-            <div class="info-row"><span>Long</span><strong class="mono">{{ displayValue(device?.lng) }}</strong></div>
-          </div>
-
           <div class="port-section mt-4">
-            <div class="card-heading compact">
-              <span class="material-symbols-outlined">lan</span>
-              <h4>Port {{ device?.type }}</h4>
-            </div>
             <div class="port-box-grid">
               <span
                 v-for="port in topologyPortItems"
@@ -587,22 +579,28 @@ const handlePushConfig = async () => {
             </span>
           </div>
 
-          <form @submit.prevent="handleSaveDetails" class="node-form mt-3">
-            <label class="form-field full">
-              <span>Nama Server OLT</span>
-              <input v-model="detailForm.name" required />
-            </label>
-            <button type="submit" :disabled="isSavingDetails" class="save-button compact-btn">
-              <span v-if="isSavingDetails" class="material-symbols-outlined spin">refresh</span>
-              <span v-else class="material-symbols-outlined">save</span>
-              Simpan Nama OLT
+          <form @submit.prevent="handleSaveDetails" class="flex flex-col gap-2.5 mt-3 text-[10px]">
+            <div class="flex items-center gap-2">
+              <span class="w-24 text-slate-400 font-bold text-left">Nama Server:</span>
+              <input v-model="detailForm.name" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="w-24 text-slate-400 font-bold text-left">Lat:</span>
+              <input v-model.number="detailForm.lat" type="number" step="any" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none font-mono transition-all" />
+            </div>
+
+            <div class="flex items-center gap-2">
+              <span class="w-24 text-slate-400 font-bold text-left">Long:</span>
+              <input v-model.number="detailForm.lng" type="number" step="any" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none font-mono transition-all" />
+            </div>
+
+            <button type="submit" :disabled="isSavingDetails" class="save-button mt-2 text-[10px]">
+              <span v-if="isSavingDetails" class="material-symbols-outlined spin text-[12px]">refresh</span>
+              <span v-else class="material-symbols-outlined text-[12px]">save</span>
+              Simpan
             </button>
           </form>
-
-          <div class="info-list compact-info mt-4">
-            <div class="info-row"><span>Lat</span><strong class="mono">{{ displayValue(device?.lat) }}</strong></div>
-            <div class="info-row"><span>Long</span><strong class="mono">{{ displayValue(device?.lng) }}</strong></div>
-          </div>
         </section>
 
         <section v-if="device?.type === 'CLIENT' && device?.pppoeUsername" class="info-card">
@@ -648,6 +646,7 @@ const handlePushConfig = async () => {
             <div class="info-list">
               <div class="info-row"><span>Brand</span><strong :title="device.brand">{{ displayValue(device.brand) }}</strong></div>
               <div class="info-row"><span>Model</span><strong :title="device.modelName">{{ displayValue(device.modelName) }}</strong></div>
+              <div class="info-row"><span>SN Modem</span><strong class="mono" :title="device.snModem">{{ displayValue(device.snModem) }}</strong></div>
               <div class="info-row"><span>Hardware</span><strong>{{ displayValue(device.hardwareVersion) }}</strong></div>
               <div class="info-row"><span>Software</span><strong :title="device.softwareVersion">{{ displayValue(device.softwareVersion) }}</strong></div>
               <div class="info-row"><span>MAC</span><strong class="mono" :title="device.macAddress">{{ displayValue(device.macAddress) }}</strong></div>
@@ -678,11 +677,11 @@ const handlePushConfig = async () => {
               <div v-for="(host, idx) in connectedHostsList" :key="idx" class="host-item" :class="{ 'is-active': host.active }">
                 <div class="host-icon">
                   <span class="material-symbols-outlined">
-                    {{ host.hostname.toLowerCase().includes('android') || host.hostname.toLowerCase().includes('iphone') || host.hostname.toLowerCase().includes('phone') ? 'smartphone' : 'laptop_mac' }}
+                    {{ String(host.hostname || '').toLowerCase().includes('android') || String(host.hostname || '').toLowerCase().includes('iphone') || String(host.hostname || '').toLowerCase().includes('phone') ? 'smartphone' : 'laptop_mac' }}
                   </span>
                 </div>
                 <div class="host-details">
-                  <div class="host-name">{{ host.hostname }}</div>
+                  <div class="host-name">{{ host.hostname || 'Device' }}</div>
                   <div class="host-ip mono">{{ host.ip }}</div>
                   <div class="host-mac mono">{{ host.mac }}</div>
                 </div>
@@ -698,30 +697,30 @@ const handlePushConfig = async () => {
               Tidak ada data perangkat yang ditarik dari modem. Coba Refresh.
             </div>
           </section>
+
+          <!-- ACS Status / Parameter Modem moved here -->
+          <section v-if="device?.type === 'CLIENT'" class="status-card mt-4">
+            <div class="section-title-row">
+              <div>
+                <span class="section-eyebrow">ACS Status</span>
+                <h3>Parameter Modem</h3>
+              </div>
+              <span v-if="device?.type === 'CLIENT'" class="status-pill" :class="statusTone">
+                {{ hasSavedModemData ? 'Tersimpan' : 'Belum inform' }}
+              </span>
+            </div>
+
+            <div class="metric-grid">
+              <div v-for="item in metricItems" :key="item.label" class="metric-card">
+                <span>{{ item.label }}</span>
+                <strong :class="item.className">{{ item.value }}</strong>
+              </div>
+            </div>
+
+          </section>
         </template>
 
-        <section class="topology-card modern-flow">
-          <div class="card-heading">
-            <span class="material-symbols-outlined">account_tree</span>
-            <h3>Alur Topologi</h3>
-          </div>
-          <div class="topology-tree">
-            <template v-for="(node, index) in devicePath" :key="node.id">
-              <div class="tree-node" :class="[`type-${node.type}`, { 'is-current': node.id === device?.id }]">
-                <div class="tree-icon">
-                  <span class="material-symbols-outlined">
-                    {{ node.type === 'OLT' ? 'dns' : node.type === 'ODC' ? 'meeting_room' : node.type === 'ODP' ? 'hub' : 'router' }}
-                  </span>
-                </div>
-                <div class="tree-info">
-                  <strong>{{ node.type }}</strong>
-                  <span>{{ node.name }}</span>
-                </div>
-              </div>
-              <div v-if="index < devicePath.length - 1" class="tree-line"></div>
-            </template>
-          </div>
-        </section>
+
       </div>
     </article>
   </div>
@@ -733,7 +732,7 @@ const handlePushConfig = async () => {
   top: 80px;
   right: 24px;
   bottom: 24px;
-  width: 340px;
+  width: 300px;
   max-width: calc(100vw - 48px);
   z-index: 1000;
   display: flex;
@@ -743,7 +742,7 @@ const handlePushConfig = async () => {
 }
 
 .client-detail-overlay.is-client {
-  width: 440px;
+  width: 340px;
 }
 
 .client-detail-panel {
@@ -815,7 +814,7 @@ const handlePushConfig = async () => {
 .header-copy h2 {
   margin: 0;
   color: #f8fafc;
-  font-size: 15px;
+  font-size: 12px;
   font-weight: 800;
   line-height: 1.15;
 }
@@ -825,7 +824,7 @@ const handlePushConfig = async () => {
   gap: 6px;
   margin-top: 4px;
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
   text-transform: uppercase;
 }
@@ -923,7 +922,7 @@ const handlePushConfig = async () => {
   display: block;
   margin-bottom: 3px;
   color: #60a5fa;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 900;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -932,7 +931,7 @@ const handlePushConfig = async () => {
 h3 {
   margin: 0;
   color: #f8fafc;
-  font-size: 13px;
+  font-size: 11px;
   font-weight: 800;
 }
 
@@ -978,7 +977,7 @@ h3 {
   display: block;
   margin-bottom: 5px;
   color: #94a3b8;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 900;
   text-transform: uppercase;
 }
@@ -988,7 +987,7 @@ h3 {
   overflow: hidden;
   color: #e2e8f0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1221,7 +1220,7 @@ h3 {
   grid-template-columns: minmax(90px, 0.8fr) minmax(0, 1.2fr);
   align-items: center;
   gap: 12px;
-  font-size: 12px;
+  font-size: 10px;
 }
 
 .info-row span {
@@ -1232,7 +1231,7 @@ h3 {
   min-width: 0;
   overflow: hidden;
   color: #f8fafc;
-  font-size: 12px;
+  font-size: 10px;
   font-weight: 800;
   text-align: right;
   text-overflow: ellipsis;
@@ -1245,20 +1244,20 @@ h3 {
 
 .port-box-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 6px;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px;
 }
 
 .port-box {
   display: grid;
   place-items: center;
-  min-height: 28px;
+  height: 20px;
   border: 1px solid rgba(52, 211, 153, 0.25);
-  border-radius: 6px;
+  border-radius: 4px;
   background: rgba(16, 185, 129, 0.08);
   color: #a7f3d0;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -1285,14 +1284,14 @@ h3 {
 
 .lan-port span {
   color: #e2e8f0;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 900;
 }
 
 .lan-port strong {
   overflow: hidden;
   color: #94a3b8;
-  font-size: 10px;
+  font-size: 8.5px;
   font-weight: 800;
   text-overflow: ellipsis;
   white-space: nowrap;

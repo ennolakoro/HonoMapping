@@ -370,15 +370,27 @@ const cleanExpiredSessions = () => {
     }
   }
   for (const [ip, progress] of syncProgress.entries()) {
-    const timeout = (progress.status === 'success' || progress.status === 'failed') ? FINISHED_SYNC_RETENTION_MS : ACTIVE_SYNC_TIMEOUT_MS
+    let timeout = ACTIVE_SYNC_TIMEOUT_MS
+    if (progress.status === 'success' || progress.status === 'failed') {
+      timeout = FINISHED_SYNC_RETENTION_MS
+    } else if (progress.status === 'triggered') {
+      timeout = 15000 // 15 detik timeout jika baru di-trigger dan belum masuk inform!
+    } else if (progress.status === 'connected' || progress.status === 'fetching') {
+      timeout = 30000 // 30 detik timeout jika sedang proses XML
+    }
+
     if (now - progress.updatedAt > timeout) {
       if (progress.status === 'triggered' || progress.status === 'connected' || progress.status === 'fetching') {
         console.warn(`[SYNC] Timeout menunggu Inform untuk ${ip} (${progress.username}) status=${progress.status}`)
+        let errorMsg = 'Timeout menunggu modem mengirim Inform. Pastikan CPE online.'
+        if (progress.status === 'triggered') {
+          errorMsg = 'Modem tidak merespon colek (Connection Request) dalam 15 detik. Pastikan IP management dapat di-ping dari Mikrotik.'
+        }
         syncProgress.set(ip, {
           ...progress,
           progress: 100,
           status: 'failed',
-          error: 'Timeout 2 menit menunggu modem mengirim Inform. Cek akses Mikrotik ke IP modem dan CWMP URL/port 7547.',
+          error: errorMsg,
           updatedAt: now
         })
       } else {

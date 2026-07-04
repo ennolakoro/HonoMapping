@@ -240,14 +240,14 @@ const submitForm = (syncAfterSave = false) => {
 .add-device-header h2 {
   margin: 0;
   color: #f8fafc;
-  font-size: 16px;
+  font-size: 13px;
   font-weight: 900;
 }
 
 .add-device-header p {
   margin: 3px 0 0;
   color: #94a3b8;
-  font-size: 11px;
+  font-size: 9px;
   font-weight: 700;
 }
 
@@ -280,7 +280,7 @@ const submitForm = (syncAfterSave = false) => {
 
 .form-field span {
   color: #94a3b8;
-  font-size: 10px;
+  font-size: 8px;
   font-weight: 900;
   letter-spacing: 0.05em;
   text-transform: uppercase;
@@ -291,11 +291,11 @@ const submitForm = (syncAfterSave = false) => {
 .form-field textarea {
   width: 100%;
   border: 1px solid rgba(148, 163, 184, 0.2);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #06101d;
   color: #f8fafc;
-  padding: 10px 11px;
-  font-size: 13px;
+  padding: 6px 8px;
+  font-size: 11px;
   font-weight: 700;
   outline: none;
 }
@@ -317,11 +317,11 @@ const submitForm = (syncAfterSave = false) => {
   display: flex;
   align-items: center;
   gap: 8px;
-  border-radius: 10px;
+  border-radius: 8px;
   background: #0d1a2c;
   color: #cbd5e1;
-  padding: 10px;
-  font-size: 12px;
+  padding: 6px 8px;
+  font-size: 10px;
 }
 
 .location-note .material-symbols-outlined {
@@ -347,9 +347,9 @@ const submitForm = (syncAfterSave = false) => {
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 40px;
-  border-radius: 10px;
-  font-size: 12px;
+  min-height: 30px;
+  border-radius: 8px;
+  font-size: 10px;
   font-weight: 900;
   cursor: pointer;
 }

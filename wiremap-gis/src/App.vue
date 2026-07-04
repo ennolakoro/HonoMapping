@@ -19,6 +19,8 @@ const handleQueueCount = (event) => {
 
 onMounted(() => {
   window.addEventListener('customer-queue-count', handleQueueCount)
+  window.addEventListener('open-router-settings', handleOpenRouterSettings)
+  window.addEventListener('logout-request', handleLogout)
   if (localStorage.getItem('wiremap_token')) {
     isLoggedIn.value = true
     checkConnectionSettings()
@@ -27,7 +29,13 @@ onMounted(() => {
 
 onUnmounted(() => {
   window.removeEventListener('customer-queue-count', handleQueueCount)
+  window.removeEventListener('open-router-settings', handleOpenRouterSettings)
+  window.removeEventListener('logout-request', handleLogout)
 })
+
+const handleOpenRouterSettings = () => {
+  isRouterModalOpen.value = true
+}
 
 const checkConnectionSettings = async () => {
   try {
@@ -95,44 +103,6 @@ const handleSaveDevice = async (deviceData) => {
   <LoginScreen v-if="!isLoggedIn" @login-success="handleLoginSuccess" />
 
   <template v-else>
-    <header class="bg-surface-container-lowest border-b border-outline-variant shadow-sm flex justify-between items-center px-4 md:px-6 w-full h-header-height z-30 flex-shrink-0 relative">
-      <div class="flex items-center gap-6 min-w-0">
-        <div class="flex items-center gap-2 min-w-0">
-          <span class="material-symbols-outlined text-primary text-2xl">account_tree</span>
-          <h1 class="text-xl md:text-2xl font-bold text-primary whitespace-nowrap">WireMap GIS</h1>
-        </div>
-        <nav class="hidden md:flex items-center gap-1 h-full">
-          <span class="text-primary border-b-2 border-primary px-3 py-2 text-xs font-semibold">Topology</span>
-          <button @click="openProvisioningQueue" class="relative text-on-surface-variant hover:bg-surface-container-high px-3 py-2 rounded text-xs font-semibold transition-colors border-0 bg-transparent cursor-pointer">
-            Fiber Queue
-            <span v-if="queueCount" class="absolute -right-1 -top-1 min-w-[18px] h-[18px] rounded-full bg-primary text-on-primary text-[10px] font-black flex items-center justify-center px-1">
-              {{ queueCount }}
-            </span>
-          </button>
-          <span class="text-on-surface-variant hover:bg-surface-container-high px-3 py-2 rounded text-xs font-semibold transition-colors">Analytics</span>
-        </nav>
-      </div>
-
-      <div class="flex items-center gap-2">
-        <button @click="openProvisioningQueue" class="md:hidden relative w-9 h-9 rounded border border-outline-variant bg-surface-container-lowest hover:bg-surface-container-high text-on-surface-variant flex items-center justify-center transition-colors cursor-pointer" title="Fiber Queue">
-          <span class="material-symbols-outlined text-[20px]">dynamic_feed</span>
-          <span v-if="queueCount" class="absolute -right-1 -top-1 min-w-[17px] h-[17px] rounded-full bg-primary text-on-primary text-[9px] font-black flex items-center justify-center px-1">
-            {{ queueCount }}
-          </span>
-        </button>
-        <button @click="isRouterModalOpen = true" class="hidden sm:flex items-center gap-2 bg-surface-container-lowest hover:bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer">
-          <span class="material-symbols-outlined text-[18px] text-primary">settings_ethernet</span>
-          <span class="hidden lg:inline">Connection Settings</span>
-          <span class="lg:hidden">Router</span>
-        </button>
-        <button @click="handleSyncRequest" class="w-9 h-9 rounded border border-outline-variant bg-surface-container-lowest hover:bg-surface-container-high text-on-surface-variant flex items-center justify-center transition-colors cursor-pointer" title="Auto-Sync Real Mikrotik">
-          <span class="material-symbols-outlined text-[20px]">sync</span>
-        </button>
-        <button @click="handleLogout" class="w-9 h-9 rounded border border-outline-variant bg-surface-container-lowest hover:border-error hover:text-error text-on-surface-variant flex items-center justify-center transition-colors cursor-pointer" title="Logout">
-          <span class="material-symbols-outlined text-[20px]">logout</span>
-        </button>
-      </div>
-    </header>
 
     <main class="flex-1 min-w-0 relative h-full flex flex-col bg-background">
       <div v-if="store.mapMode === 'ADD_CABLE'" class="absolute top-4 left-1/2 -translate-x-1/2 bg-[#d97706] text-white px-4 py-2 rounded shadow-lg text-sm font-semibold z-20 flex items-center gap-3 border border-[#f59e0b] max-w-[calc(100%-2rem)]">

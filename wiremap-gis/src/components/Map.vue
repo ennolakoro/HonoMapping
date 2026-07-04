@@ -12,8 +12,16 @@ let deviceLayer = null
 let polylineLayer = null
 
 const isClientModalOpen = ref(false)
+const isLegendOpen = ref(false)
+const isOutageLogsOpen = ref(false)
+const outageLogs = ref(JSON.parse(localStorage.getItem('wiremap_outage_logs') || '[]'))
 const selectedClient = ref(null)
 const allDevicesData = ref([])
+
+const clearOutageLogs = () => {
+  outageLogs.value = []
+  localStorage.setItem('wiremap_outage_logs', '[]')
+}
 const selectedOdpId = ref('')
 const plotError = ref('')
 const syncStatus = ref('')
@@ -23,6 +31,107 @@ const isWorkflowOpen = ref(false)
 const workflowSearch = ref('')
 // Filter status plotting: 'UNMAPPED' | 'PLOTTED'
 const queuePlotFilter = ref('UNMAPPED')
+
+// Floating Navbar State & Autocomplete
+const searchQuery = ref('')
+const showSearchResults = ref(false)
+const isDeviceListOpen = ref(false)
+const deviceListSearchQuery = ref('')
+const deviceListTypeFilter = ref('ALL')
+
+const searchType = ref('device')
+const searchLat = ref('')
+const searchLng = ref('')
+
+const zoomToSearchCoords = () => {
+  const lat = parseFloat(searchLat.value)
+  const lng = parseFloat(searchLng.value)
+  if (Number.isNaN(lat) || Number.isNaN(lng)) {
+    alert('Format koordinat tidak valid!')
+    return
+  }
+  if (map) {
+    map.setView([lat, lng], 20)
+    const highlightIcon = L.divIcon({
+      className: 'search-highlight-marker',
+      html: '<div style="width:24px; height:24px; border-radius:50%; background:rgba(59, 130, 246, 0.4); border:2px solid #3b82f6; box-shadow:0 0 10px #3b82f6; animation:ping 1.5s infinite; transform:translate(-5px,-5px);"></div>',
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    })
+    const tempMarker = L.marker([lat, lng], { icon: highlightIcon }).addTo(map)
+    setTimeout(() => {
+      map.removeLayer(tempMarker)
+    }, 6000)
+  }
+}
+
+const filteredSearchDevices = computed(() => {
+  const query = searchQuery.value.trim().toLowerCase()
+  if (!query) return []
+  return allDevicesData.value.filter(d => 
+    String(d.name || '').toLowerCase().includes(query) ||
+    String(d.pppoeUsername || '').toLowerCase().includes(query) ||
+    String(d.snModem || '').toLowerCase().includes(query)
+  ).slice(0, 10)
+})
+
+const filteredListDevices = computed(() => {
+  const query = deviceListSearchQuery.value.trim().toLowerCase()
+  let list = allDevicesData.value
+  
+  if (deviceListTypeFilter.value !== 'ALL') {
+    list = list.filter(d => d.type === deviceListTypeFilter.value)
+  }
+  
+  if (!query) return list
+  return list.filter(d => 
+    String(d.name || '').toLowerCase().includes(query) ||
+    String(d.type || '').toLowerCase().includes(query) ||
+    String(d.pppoeUsername || '').toLowerCase().includes(query)
+  )
+})
+
+const selectSearchDevice = (dev) => {
+  showSearchResults.value = false
+  searchQuery.value = ''
+  zoomToDevice(dev)
+}
+
+const zoomToDevice = (dev) => {
+  if (map && hasCoords(dev)) {
+    map.setView([Number(dev.lat), Number(dev.lng)], 20)
+    if (dev.type === 'CLIENT') {
+      selectedClient.value = dev
+      isClientModalOpen.value = true
+    }
+  } else {
+    alert('Perangkat tidak memiliki koordinat di peta.')
+  }
+}
+
+const openRouterSettings = () => {
+  window.dispatchEvent(new CustomEvent('open-router-settings'))
+}
+
+const logoutRequest = () => {
+  if (confirm('Apakah Anda yakin ingin logout dari sistem?')) {
+    window.dispatchEvent(new CustomEvent('logout-request'))
+  }
+}
+
+const zoomIn = () => {
+  if (map) map.zoomIn()
+}
+
+const zoomOut = () => {
+  if (map) map.zoomOut()
+}
+
+const handleDocClickForSearch = (e) => {
+  if (showSearchResults.value && !e.target.closest('.search-container-box')) {
+    showSearchResults.value = false
+  }
+}
 
 const syncProgressMap = ref({})
 let pollInterval = null
@@ -148,12 +257,50 @@ let editPolyline = null
 const polylineMap = ref({})
 let adjacentCables = []
 
-// Helper: mendeteksi jika dua koordinat dekat (< 5 meter) untuk snapping & co-dragging
+// Helper: mendeteksi jika dua koordinat dekat (< 12 meter) untuk snapping & co-dragging
+const getClosestPointOnSegment = (p, a, b) => {
+  const x = p[0], y = p[1]
+  const x1 = a[0], y1 = a[1]
+  const x2 = b[0], y2 = b[1]
+  
+  const dx = x2 - x1
+  const dy = y2 - y1
+  
+  if (dx === 0 && dy === 0) return a
+  
+  let t = ((x - x1) * dx + (y - y1) * dy) / (dx * dx + dy * dy)
+  t = Math.max(0, Math.min(1, t))
+  
+  return [x1 + t * dx, y1 + t * dy]
+}
+
+const getClosestPointOnPolyline = (p, coordsList) => {
+  let closestPt = null
+  let minDistance = Infinity
+  
+  for (let i = 0; i < coordsList.length - 1; i++) {
+    const pt = getClosestPointOnSegment(p, coordsList[i], coordsList[i+1])
+    const dist = Math.sqrt(Math.pow(p[0] - pt[0], 2) + Math.pow(p[1] - pt[1], 2))
+    if (dist < minDistance) {
+      minDistance = dist
+      closestPt = pt
+    }
+  }
+  return { point: closestPt, distance: minDistance }
+}
+
 const isCloseCoord = (c1, c2) => {
   if (!c1 || !c2) return false
   const latDiff = Math.abs(c1[0] - c2[0])
   const lngDiff = Math.abs(c1[1] - c2[1])
-  return latDiff < 0.000045 && lngDiff < 0.000045
+  return latDiff < 0.0001 && lngDiff < 0.0001
+}
+
+const isSameCoord = (c1, c2) => {
+  if (!c1 || !c2) return false
+  const latDiff = Math.abs(c1[0] - c2[0])
+  const lngDiff = Math.abs(c1[1] - c2[1])
+  return latDiff < 0.00001 && lngDiff < 0.00001
 }
 
 const clearEditHandles = () => {
@@ -200,18 +347,21 @@ const renderEditHandles = () => {
       const newLatLng = ev.latlng
       const newCoord = [newLatLng.lat, newLatLng.lng]
       
-      // Snapping: jika dekat dengan salah satu vertex kabel tetangga, snap ke sana!
+      // Snapping ke segmen garis kabel terdekat
       let snappedCoord = newCoord
-      let snapFound = false
+      let minDistance = Infinity
+      
       for (const adj of adjacentCables) {
-        for (const pt of adj.coords) {
-          if (isCloseCoord(newCoord, pt)) {
-            snappedCoord = pt
-            snapFound = true
-            break
+        if (adj.coords.length >= 2) {
+          const result = getClosestPointOnPolyline(newCoord, adj.coords)
+          if (result.point && result.distance < minDistance) {
+            minDistance = result.distance
+            snappedCoord = result.point
           }
         }
-        if (snapFound) break
+      }
+      if (minDistance > 0.000025) {
+        snappedCoord = newCoord
       }
       
       coords[i] = snappedCoord
@@ -226,7 +376,7 @@ const renderEditHandles = () => {
         adj.coords.forEach((pt, idx) => {
           // Lewati titik ujung (0 dan length-1) agar posisi fisik ODP / CPE tidak bergeser
           if (idx > 0 && idx < adj.coords.length - 1) {
-            if (isCloseCoord(pt, dragStartCoord)) {
+            if (isSameCoord(pt, dragStartCoord)) {
               adj.coords[idx] = snappedCoord
               changed = true
             }
@@ -325,18 +475,21 @@ const renderEditHandles = () => {
       const newLatLng = ev.latlng
       const newCoord = [newLatLng.lat, newLatLng.lng]
       
-      // Snapping: jika dekat dengan salah satu vertex kabel tetangga, snap ke sana!
+      // Snapping ke segmen garis kabel terdekat
       let snappedCoord = newCoord
-      let snapFound = false
+      let minDistance = Infinity
+      
       for (const adj of adjacentCables) {
-        for (const pt of adj.coords) {
-          if (isCloseCoord(newCoord, pt)) {
-            snappedCoord = pt
-            snapFound = true
-            break
+        if (adj.coords.length >= 2) {
+          const result = getClosestPointOnPolyline(newCoord, adj.coords)
+          if (result.point && result.distance < minDistance) {
+            minDistance = result.distance
+            snappedCoord = result.point
           }
         }
-        if (snapFound) break
+      }
+      if (minDistance > 0.000025) {
+        snappedCoord = newCoord
       }
 
       coords[i + 1] = snappedCoord
@@ -744,7 +897,16 @@ const startRouteFromDevice = (device) => {
 
 const deleteDevice = async (device) => {
   if (!device) return
-  const confirmed = confirm(`Hapus ${device.type} "${device.name}"? Route anak perangkat akan dilepas.`)
+
+  const hasParent = device.parentId !== null && device.parentId !== undefined && device.parentId !== '';
+  const hasChildren = allDevicesData.value.some(d => d.parentId === device.id);
+
+  if (hasParent || hasChildren) {
+    alert(`Perangkat "${device.name}" tidak dapat dihapus karena masih memiliki sambungan aktif (uplink/downlink). Silakan putuskan sambungan/route terlebih dahulu!`);
+    return;
+  }
+
+  const confirmed = confirm(`Hapus ${device.type} "${device.name}"?`)
   if (!confirmed) return
   try {
     await api.deleteDevice(device.id, device.type)
@@ -760,16 +922,47 @@ const loadDevices = async () => {
   try {
     const devices = await api.getDevices()
     
-    // Deteksi transisi status online -> offline untuk memicu alarm suara
+    // Deteksi transisi status online -> offline (atau pemulihan) untuk log gangguan & alarm suara
     const isFirstLoad = Object.keys(previousOnlineStatuses).length === 0
     devices.forEach(device => {
       if (device.type === 'CLIENT') {
         const currentOnline = device.isOnline
         const prevOnline = previousOnlineStatuses[device.id]
         
-        if (!isFirstLoad && prevOnline === true && currentOnline === false) {
-          playOutageAlarm()
-          console.log(`[ALARM] Client went offline: ${device.name}`)
+        if (!isFirstLoad && prevOnline !== undefined && prevOnline !== currentOnline) {
+          let logMessage = ''
+          let status = 'Down'
+          
+          if (currentOnline === false) {
+            status = 'Down'
+            const health = getClientHealth(device)
+            if (health === 'power_failure') {
+              logMessage = 'Mati Listrik (Dying Gasp)'
+            } else {
+              logMessage = 'LOS (Kabel Putus / Offline)'
+            }
+            playOutageAlarm()
+          } else {
+            status = 'Up'
+            logMessage = 'Koneksi Pulih (Online)'
+          }
+
+          // Tambahkan ke riwayat log gangguan
+          const nowStr = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+          const newLog = {
+            deviceName: device.name,
+            status,
+            message: logMessage,
+            time: nowStr,
+            timestamp: Date.now()
+          }
+          
+          outageLogs.value.unshift(newLog)
+          if (outageLogs.value.length > 100) {
+            outageLogs.value = outageLogs.value.slice(0, 100)
+          }
+          localStorage.setItem('wiremap_outage_logs', JSON.stringify(outageLogs.value))
+          console.log(`[LOG SINKRON] ${device.name} is ${status}: ${logMessage}`)
         }
         previousOnlineStatuses[device.id] = currentOnline
       }
@@ -791,6 +984,59 @@ const loadDevices = async () => {
     const deviceMap = {}
     devices.forEach(d => { deviceMap[d.id] = d })
 
+    // 1. Parsing awal semua koordinat kabel ke dalam memori
+    const devicePaths = {}
+    devices.forEach(device => {
+      if (device.parentId && deviceMap[device.parentId]) {
+        const parent = deviceMap[device.parentId]
+        if (hasCoords(parent)) {
+          let latlngs = []
+          if (device.cablePath) {
+            try {
+              latlngs = JSON.parse(device.cablePath)
+            } catch (e) {
+              console.error("Failed to parse cablePath for", device.name, e)
+            }
+          }
+          if (!latlngs || !latlngs.length) {
+            latlngs = [
+              [parent.lat, parent.lng],
+              [device.lat, device.lng]
+            ]
+          }
+          devicePaths[device.id] = latlngs
+        }
+      }
+    })
+
+    // 2. Alinyemen otomatis (Auto-Snapping) secara dinamis pada saat rendering:
+    // Jika ada koordinat vertex dari dua kabel se-induk yang berjarak dekat (< 5 meter),
+    // sejajarkan mereka agar berimpit sempurna menjadi satu garis di peta.
+    const pathKeys = Object.keys(devicePaths)
+    for (let i = 0; i < pathKeys.length; i++) {
+      const id1 = pathKeys[i]
+      const dev1 = deviceMap[id1]
+      const latlngs1 = devicePaths[id1]
+      
+      for (let j = i + 1; j < pathKeys.length; j++) {
+        const id2 = pathKeys[j]
+        const dev2 = deviceMap[id2]
+        const latlngs2 = devicePaths[id2]
+        
+        // Hanya sejajarkan jika berasal dari induk (parent) yang sama
+        if (dev1.parentId === dev2.parentId) {
+          // Bandingkan vertex (abaikan titik terakhir karena itu rumah pelanggan)
+          for (let idx1 = 0; idx1 < latlngs1.length - 1; idx1++) {
+            for (let idx2 = 0; idx2 < latlngs2.length - 1; idx2++) {
+              if (isSameCoord(latlngs1[idx1], latlngs2[idx2])) {
+                latlngs2[idx2] = [...latlngs1[idx1]]
+              }
+            }
+          }
+        }
+      }
+    }
+
     devices.forEach(device => {
       if (hasCoords(device)) {
         // Cek apakah ada hubungan kabel ( uplink parent maupun downlink children )
@@ -799,9 +1045,12 @@ const loadDevices = async () => {
         const hasCable = hasParent || hasChildren;
         const isDraggable = !hasCable;
 
+        const zIndexOffset = device.type === 'OLT' ? 1000 : device.type === 'ODC' ? 2000 : device.type === 'ODP' ? 3000 : 4000;
         const marker = L.marker([device.lat, device.lng], { 
           icon: getIconForType(device.type, device),
-          draggable: isDraggable
+          draggable: isDraggable,
+          riseOnHover: true,
+          zIndexOffset: zIndexOffset
         })
         
         const dragTip = isDraggable 
@@ -857,20 +1106,8 @@ const loadDevices = async () => {
         if (device.parentId && deviceMap[device.parentId]) {
           const parent = deviceMap[device.parentId]
           if (hasCoords(parent)) {
-            let latlngs = []
-            if (device.cablePath) {
-              try {
-                latlngs = JSON.parse(device.cablePath)
-              } catch (e) {
-                console.error("Failed to parse cablePath for", device.name, e)
-              }
-            }
-            if (!latlngs || !latlngs.length) {
-              latlngs = [
-                [parent.lat, parent.lng],
-                [device.lat, device.lng]
-              ]
-            }
+            const latlngs = devicePaths[device.id]
+            if (latlngs) {
 
             const polyline = L.polyline(latlngs, {
               color: device.type === 'CLIENT' ? '#16a34a' : '#0066ff',
@@ -962,6 +1199,7 @@ const loadDevices = async () => {
 
             polyline.addTo(polylineLayer)
             clickPolyline.addTo(polylineLayer)
+            }
           }
         }
       }
@@ -1153,10 +1391,9 @@ onMounted(() => {
   // Initialize map
   map = L.map(mapContainer.value, {
     zoomControl: false,
+    attributionControl: false,
     maxZoom: 22
-  }).setView([-7.250445, 112.768845], 13) 
-
-  L.control.zoom({ position: 'topright' }).addTo(map)
+  }).setView([-7.250445, 112.768845], 13)
 
   lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
@@ -1268,12 +1505,14 @@ onMounted(() => {
   window.addEventListener('sync-mikrotik', triggerSync)
   window.addEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
   
+  document.addEventListener('click', handleDocClickForSearch)
   loadDevices()
   startAutoRefresh()
 })
 
 onUnmounted(() => {
   stopAutoRefresh()
+  document.removeEventListener('click', handleDocClickForSearch)
   window.removeEventListener('refresh-map', loadDevices)
   window.removeEventListener('tambah-kabel', handleTambahKabelEvent)
   window.removeEventListener('lihat-detail', handleLihatDetailEvent)
@@ -1294,34 +1533,204 @@ watch(unmappedClients, (clients) => {
   }">
     <div ref="mapContainer" class="absolute inset-0 z-0"></div>
 
-    <!-- Map Layer Switcher (Top Right) -->
-    <div class="absolute top-4 right-14 z-10 flex bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm pointer-events-auto">
+    <!-- Floating Navigation Row (No Background Header Container!) -->
+    <div class="absolute top-4 left-4 right-4 z-[99] pointer-events-none flex flex-wrap gap-2 items-center justify-between">
+      
+      <!-- Left controls (Logo, Search, List Perangkat, Queue) -->
+      <div class="flex items-center gap-2 pointer-events-auto">
+        <!-- Logo Badge -->
+        <div class="flex items-center gap-1.5 bg-white/95 border border-slate-200/80 px-3 py-1.5 rounded-lg shadow-md backdrop-blur-sm select-none">
+          <span class="material-symbols-outlined text-primary text-[18px] font-bold">account_tree</span>
+          <span class="text-xs font-black text-primary tracking-wide">WireMap GIS</span>
+        </div>
+
+        <!-- Search Box (Single horizontal row!) -->
+        <div class="relative search-container-box flex items-center bg-white/95 border border-slate-200/80 rounded-lg shadow-md p-1 px-1.5 w-[380px] max-w-[380px] backdrop-blur-sm pointer-events-auto gap-1.5 h-9">
+          <!-- Left side: Inputs -->
+          <div class="flex-1 min-w-0">
+            <!-- Perangkat Search Input -->
+            <div v-if="searchType === 'device'" class="flex items-center w-full">
+              <input 
+                v-model="searchQuery" 
+                @focus="showSearchResults = true"
+                placeholder="Cari Perangkat / Pelanggan..." 
+                class="bg-transparent border-0 outline-none text-xs w-full text-slate-800 placeholder-slate-400 font-medium" 
+              />
+              
+              <!-- Dropdown Results -->
+              <div v-if="showSearchResults && searchQuery" class="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto z-[100] p-1 flex flex-col gap-0.5 shadow-md">
+                <div v-if="filteredSearchDevices.length === 0" class="p-2 text-xs text-slate-400 text-center">Tidak ditemukan.</div>
+                <button 
+                  v-for="d in filteredSearchDevices" 
+                  :key="d.id"
+                  type="button"
+                  @click="selectSearchDevice(d)"
+                  class="text-left w-full px-2.5 py-1.5 text-xs hover:bg-slate-100 rounded-md border-0 bg-transparent cursor-pointer flex justify-between items-center transition-colors"
+                >
+                  <div class="flex flex-col gap-0.5">
+                    <span class="font-bold text-slate-700 text-[11px]">{{ d.name }}</span>
+                    <span v-if="d.pppoeUsername" class="text-[9px] text-slate-400 font-mono">{{ d.pppoeUsername }}</span>
+                  </div>
+                  <span 
+                    class="text-[8px] font-black px-1.5 py-0.5 rounded"
+                    :class="d.type === 'OLT' ? 'bg-blue-100 text-blue-700' : d.type === 'ODC' ? 'bg-slate-100 text-slate-700' : d.type === 'ODP' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'"
+                  >
+                    {{ d.type }}
+                  </span>
+                </button>
+              </div>
+            </div>
+
+            <!-- Location Lat/Long Inputs -->
+            <div v-else class="flex items-center gap-1 w-full">
+              <input 
+                v-model="searchLat" 
+                placeholder="Lat" 
+                class="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] w-20 outline-none font-mono text-slate-800 text-center" 
+              />
+              <input 
+                v-model="searchLng" 
+                placeholder="Long" 
+                class="bg-slate-50 border border-slate-200 rounded px-1.5 py-0.5 text-[10px] w-20 outline-none font-mono text-slate-800 text-center" 
+              />
+            </div>
+          </div>
+
+          <!-- Middle: Dropdown selector (Perangkat, Lokasi) -->
+          <select v-model="searchType" class="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[10px] font-bold text-slate-600 outline-none cursor-pointer h-7 shrink-0">
+            <option value="device">Perangkat</option>
+            <option value="location">Lokasi</option>
+          </select>
+
+          <!-- Right: Search Symbol + Cari button -->
+          <button 
+            type="button" 
+            @click.stop="searchType === 'device' ? (showSearchResults = true) : zoomToSearchCoords()" 
+            class="bg-primary text-white border-0 rounded px-2.5 py-1 text-[10px] font-bold cursor-pointer hover:bg-primary-hover flex items-center gap-1 shrink-0 h-7"
+          >
+            <span class="material-symbols-outlined text-[13px] font-bold">search</span>
+            Cari
+          </button>
+        </div>
+
+        <!-- Main Menus (List Perangkat & Fiber Queue) -->
+        <div class="flex bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm">
+          <button 
+            type="button"
+            @click="isDeviceListOpen = true" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 bg-transparent text-slate-700 hover:bg-slate-100 flex items-center gap-1 cursor-pointer"
+          >
+            <span class="material-symbols-outlined text-[14px]">format_list_bulleted</span>
+            List Perangkat
+          </button>
+          <button 
+            type="button"
+            @click="isWorkflowOpen = true" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 bg-transparent text-slate-700 hover:bg-slate-100 flex items-center gap-1.5 relative cursor-pointer"
+          >
+            <span class="material-symbols-outlined text-[14px]">dynamic_feed</span>
+            Queue
+            <span v-if="unmappedClients.length" class="min-w-[15px] h-[15px] rounded-full bg-primary text-white text-[9px] font-black flex items-center justify-center px-0.5">
+              {{ unmappedClients.length }}
+            </span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Right controls (Log Gangguan, Map Layers, Router Settings, Sync, Logout) -->
+      <div class="flex items-center gap-2 pointer-events-auto">
+        <!-- Log Gangguan -->
+        <div class="flex bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm">
+          <button 
+            type="button"
+            @click="isOutageLogsOpen = !isOutageLogsOpen" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1 text-red-600 bg-transparent hover:bg-red-50"
+            :class="{ 'bg-red-600 text-white hover:bg-red-700': isOutageLogsOpen }"
+          >
+            <span class="material-symbols-outlined text-[14px]">warning</span>
+            Log Gangguan
+          </button>
+        </div>
+
+        <!-- Map Layer Switcher (Light, Dark, Satellite) -->
+        <div class="flex bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm">
+          <button 
+            type="button"
+            @click="setMapLayer('light')" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
+            :class="activeMapLayer === 'light' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+          >
+            <span class="material-symbols-outlined text-[14px]">light_mode</span>
+            Light
+          </button>
+          <button 
+            type="button"
+            @click="setMapLayer('dark')" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
+            :class="activeMapLayer === 'dark' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+          >
+            <span class="material-symbols-outlined text-[14px]">dark_mode</span>
+            Dark
+          </button>
+          <button 
+            type="button"
+            @click="setMapLayer('satellite')" 
+            class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
+            :class="activeMapLayer === 'satellite' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+          >
+            <span class="material-symbols-outlined text-[14px]">satellite</span>
+            Satelit
+          </button>
+        </div>
+
+        <!-- System controls (Settings, Sync, Logout) -->
+        <div class="flex items-center bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm gap-1">
+          <button 
+            type="button"
+            @click="openRouterSettings" 
+            class="p-1.5 rounded-md hover:bg-slate-100 text-primary border-0 bg-transparent cursor-pointer flex items-center" 
+            title="Koneksi Router API"
+          >
+            <span class="material-symbols-outlined text-[16px]">settings_ethernet</span>
+          </button>
+          <button 
+            type="button"
+            @click="triggerSync" 
+            class="p-1.5 rounded-md hover:bg-slate-100 text-slate-700 border-0 bg-transparent cursor-pointer flex items-center" 
+            title="Sync Mikrotik"
+          >
+            <span class="material-symbols-outlined text-[16px]">sync</span>
+          </button>
+          <button 
+            type="button"
+            @click="logoutRequest" 
+            class="p-1.5 rounded-md hover:bg-red-50 text-red-600 border-0 bg-transparent cursor-pointer flex items-center" 
+            title="Logout"
+          >
+            <span class="material-symbols-outlined text-[16px]">logout</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Vertical Zoom controls (floated right below the logout block) -->
+    <div class="absolute top-20 right-5 z-[99] pointer-events-auto flex flex-col bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm gap-0.5 items-center">
       <button 
         type="button"
-        @click="setMapLayer('light')" 
-        class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
-        :class="activeMapLayer === 'light' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+        @click="zoomIn"
+        class="p-1.5 rounded-md hover:bg-slate-100 text-slate-700 border-0 bg-transparent cursor-pointer flex items-center"
+        title="Zoom In"
       >
-        <span class="material-symbols-outlined text-[14px]">light_mode</span>
-        Light
+        <span class="material-symbols-outlined text-[15px] font-bold">add</span>
       </button>
+      <div class="h-[1px] w-3 bg-slate-200 select-none"></div>
       <button 
         type="button"
-        @click="setMapLayer('dark')" 
-        class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
-        :class="activeMapLayer === 'dark' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+        @click="zoomOut"
+        class="p-1.5 rounded-md hover:bg-slate-100 text-slate-700 border-0 bg-transparent cursor-pointer flex items-center"
+        title="Zoom Out"
       >
-        <span class="material-symbols-outlined text-[14px]">dark_mode</span>
-        Dark
-      </button>
-      <button 
-        type="button"
-        @click="setMapLayer('satellite')" 
-        class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
-        :class="activeMapLayer === 'satellite' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
-      >
-        <span class="material-symbols-outlined text-[14px]">satellite</span>
-        Satelit
+        <span class="material-symbols-outlined text-[15px] font-bold">remove</span>
       </button>
     </div>
 
@@ -1334,18 +1743,18 @@ watch(unmappedClients, (clients) => {
       <span class="material-symbols-outlined">add</span>
     </button>
 
-    <div v-if="store.mapMode === 'PLOT_CLIENT'" class="absolute top-4 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg">
+    <div v-if="store.mapMode === 'PLOT_CLIENT'" class="absolute top-20 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg">
       Klik lokasi rumah {{ store.plottingClient?.name || 'pelanggan' }} di peta
     </div>
 
-    <div v-if="store.mapMode === 'ADD_DEVICE'" class="placement-hint">
+    <div v-if="store.mapMode === 'ADD_DEVICE'" class="placement-hint !top-20">
       <span class="material-symbols-outlined">add_location_alt</span>
       <span>Klik titik perangkat di peta</span>
       <button @click="store.cancelAdd()">Batal</button>
     </div>
 
     <!-- Banner Info Edit Rute Kabel -->
-    <div v-if="activeEditDevice" class="absolute top-4 left-1/2 z-20 -translate-x-1/2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 text-white flex items-center gap-4 max-w-[calc(100%-2rem)] w-full md:w-auto">
+    <div v-if="activeEditDevice" class="absolute top-20 left-1/2 z-20 -translate-x-1/2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 text-white flex items-center gap-4 max-w-[calc(100%-2rem)] w-full md:w-auto">
       <span class="material-symbols-outlined text-orange-400 text-2xl flex-shrink-0">timeline</span>
       <div class="flex-1 min-w-0">
         <h4 class="text-xs font-bold text-slate-300">Mengedit Jalur Kabel: {{ activeEditDevice.name }}</h4>
@@ -1476,6 +1885,135 @@ watch(unmappedClients, (clients) => {
       </aside>
     </div>
 
+    <!-- Outage Logs Panel (Sliding Drawer on Right) -->
+    <div v-if="isOutageLogsOpen" class="workflow-modal-backdrop" @click.self="isOutageLogsOpen = false">
+      <aside class="workflow-panel">
+        <header class="workflow-toggle">
+          <div class="workflow-title">
+            <span class="material-symbols-outlined text-red-600">warning</span>
+            <div>
+              <strong>Log Gangguan</strong>
+              <small>Riwayat Gangguan & Trouble Perangkat</small>
+            </div>
+          </div>
+          <button type="button" class="workflow-close" @click="isOutageLogsOpen = false" aria-label="Tutup Log">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </header>
+
+        <div class="workflow-body flex flex-col h-[calc(100%-60px)]">
+          <div class="flex justify-between items-center px-4 py-2 border-b border-slate-300/20">
+            <span class="text-xs text-slate-500 font-bold">Total Log: {{ outageLogs.length }}</span>
+            <button @click="clearOutageLogs" class="text-xs text-red-500 hover:text-red-700 bg-transparent border-0 cursor-pointer font-bold flex items-center gap-1">
+              <span class="material-symbols-outlined text-[14px]">delete</span>
+              Hapus Semua
+            </button>
+          </div>
+
+          <!-- Logs List -->
+          <div class="flex-1 overflow-y-auto p-4 flex flex-col gap-2.5">
+            <div v-if="outageLogs.length === 0" class="flex flex-col items-center justify-center py-12 text-slate-500 gap-2">
+              <span class="material-symbols-outlined text-3xl">check_circle</span>
+              <span class="text-xs">Tidak ada riwayat gangguan. Jaringan aman!</span>
+            </div>
+            
+            <div 
+              v-for="(log, idx) in outageLogs" 
+              :key="idx" 
+              class="p-3 rounded-lg border text-[11px] leading-relaxed flex flex-col gap-1.5"
+              :class="log.status === 'Down' ? 'bg-red-500/5 border-red-500/20' : 'bg-green-500/5 border-green-500/20'"
+            >
+              <div class="flex justify-between items-center font-bold">
+                <span class="text-slate-800 text-[12px]">{{ log.deviceName }}</span>
+                <span 
+                  class="px-2 py-0.5 rounded-full text-[9px] uppercase font-bold tracking-wider"
+                  :class="log.status === 'Down' ? 'bg-red-500 text-white animate-pulse' : 'bg-green-500 text-white'"
+                >
+                  {{ log.status }}
+                </span>
+              </div>
+              <div class="text-slate-500 font-medium flex justify-between">
+                <span>{{ log.message }}</span>
+                <span class="text-slate-400 text-[10px] font-mono">{{ log.time }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- List Perangkat Panel (Sliding Drawer on Right) -->
+    <div v-if="isDeviceListOpen" class="workflow-modal-backdrop" @click.self="isDeviceListOpen = false">
+      <aside class="workflow-panel w-[280px] max-w-[280px]">
+        <header class="workflow-toggle">
+          <div class="workflow-title">
+            <span class="material-symbols-outlined text-primary">format_list_bulleted</span>
+            <div>
+              <strong>Daftar Perangkat</strong>
+              <small>Total: {{ allDevicesData.length }} Perangkat</small>
+            </div>
+          </div>
+          <button type="button" class="workflow-close" @click="isDeviceListOpen = false" aria-label="Tutup List">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </header>
+
+        <div class="workflow-body flex flex-col h-[calc(100%-60px)] bg-slate-900/95 text-white">
+          <div class="p-3 flex flex-col gap-2 border-b border-white/10">
+            <label class="workflow-search">
+              <span class="material-symbols-outlined">search</span>
+              <input v-model="deviceListSearchQuery" placeholder="Cari Nama / IP / Tipe..." class="w-full text-xs" />
+            </label>
+            <!-- Pill Filter Tipe Perangkat -->
+            <div class="flex flex-wrap gap-1">
+              <button 
+                v-for="type in ['ALL', 'OLT', 'ODC', 'ODP', 'CLIENT']" 
+                :key="type"
+                type="button"
+                @click="deviceListTypeFilter = type"
+                class="px-2 py-0.5 rounded text-[8px] font-black uppercase transition-all cursor-pointer border-0"
+                :class="deviceListTypeFilter === type ? 'bg-primary text-white' : 'bg-white/10 text-slate-300 hover:bg-white/20'"
+              >
+                {{ type }}
+              </button>
+            </div>
+          </div>
+
+          <!-- Device List items (compact & borderless list items) -->
+          <div class="flex-1 overflow-y-auto p-3 flex flex-col">
+            <div v-if="filteredListDevices.length === 0" class="text-xs text-slate-400 text-center py-8">Tidak ada perangkat ditemukan.</div>
+            <button 
+              v-for="d in filteredListDevices" 
+              :key="d.id"
+              type="button"
+              @click="zoomToDevice(d); isDeviceListOpen = false"
+              class="w-full text-left py-2 px-1 hover:bg-white/10 cursor-pointer flex justify-between items-center border-b border-white/5 last:border-b-0 bg-transparent transition-colors border-t-0 border-x-0 outline-none"
+            >
+              <div class="flex flex-col gap-0.5 min-w-0 flex-1 pr-2">
+                <span class="font-bold text-slate-200 text-[11px] truncate block">{{ d.name }}</span>
+                <span v-if="d.pppoeUsername" class="text-[9px] text-slate-400 font-mono truncate block">
+                  {{ d.pppoeUsername }}
+                </span>
+              </div>
+              <div class="flex items-center gap-1.5 flex-shrink-0">
+                <span 
+                  class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase"
+                  :class="d.type === 'OLT' ? 'bg-blue-900/40 text-blue-300' : d.type === 'ODC' ? 'bg-slate-800 text-slate-300' : d.type === 'ODP' ? 'bg-yellow-900/40 text-yellow-300' : 'bg-green-900/40 text-green-300'"
+                >
+                  {{ d.type }}
+                </span>
+                <span 
+                  v-if="d.type === 'CLIENT'"
+                  class="w-1.5 h-1.5 rounded-full flex-shrink-0"
+                  :class="d.isOnline ? 'bg-green-500' : 'bg-red-500'"
+                ></span>
+              </div>
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
+
     <section v-if="store.mapMode === 'PLOT_CLIENT' && store.pendingCoords" class="plot-confirm">
       <div class="plot-title">
         <span class="material-symbols-outlined">add_location_alt</span>
@@ -1504,55 +2042,63 @@ watch(unmappedClients, (clients) => {
     </section>
     
     <!-- Floating Map Controls & Legend -->
-    <div class="absolute left-4 bottom-4 md:left-6 md:bottom-6 z-10 w-[calc(100%-2rem)] max-w-[280px] pointer-events-auto">
-       <div class="bg-transparent px-4 py-3 text-slate-800">
-          <div class="flex flex-col gap-2.5 text-[11px] font-bold text-slate-900 bg-white/40 backdrop-blur-[3px] p-2.5 rounded-lg border border-slate-300/30">
-            <!-- Header Legend -->
-            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-700 border-b border-slate-300/20 pb-1.5 mb-0.5">
-              Legend
-            </div>
-            <!-- OLT -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-4 h-4 bg-[#0050cb] rounded border border-white shadow-sm flex items-center justify-center font-bold text-[8px] text-white">OLT</div>
-              <span>OLT (Pusat)</span>
-            </div>
-            <!-- ODC -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-4 h-3 bg-[#64748b] rounded border border-white shadow-sm"></div>
-              <span>ODC (Splitter 1)</span>
-            </div>
-            <!-- ODP (Normal) -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-4 h-3 bg-[#d97706] rounded border border-white shadow-sm"></div>
-              <span>ODP (Normal)</span>
-            </div>
-            <!-- ODP Mass LOS -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-4 h-3 bg-[#dc2626] rounded border border-white shadow-sm animate-pulse"></div>
-              <span class="text-red-600 font-bold">ODP Mass LOS (Putus)</span>
-            </div>
-            <!-- Client Online -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-3.5 h-3.5 bg-[#16a34a] rounded-full border border-white shadow-sm"></div>
-              <span>Client (Online)</span>
-            </div>
-            <!-- Client Warning -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-3.5 h-3.5 bg-[#f59e0b] rounded-full border border-white shadow-sm"></div>
-              <span>Sinyal Lemah (&gt;-27dB)</span>
-            </div>
-            <!-- Client Offline -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white shadow-sm animate-pulse"></div>
-              <span class="text-red-600 font-bold">LOS (Kabel Putus)</span>
-            </div>
-            <!-- Client Mati Listrik -->
-            <div class="flex items-center gap-2.5">
-              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white shadow-sm flex items-center justify-center text-[9px]">🔌</div>
-              <span>CPE Mati Listrik</span>
-            </div>
+    <div class="absolute left-4 bottom-4 z-10 w-fit max-w-[150px] pointer-events-auto select-none">
+      <div class="flex flex-col gap-1 text-[9px] font-bold text-slate-800 bg-white/95 border border-slate-200/80 p-2 rounded-lg shadow-md backdrop-blur-sm">
+        <!-- Header Legend -->
+        <div 
+          @click.stop="isLegendOpen = !isLegendOpen" 
+          class="flex items-center justify-between text-[9px] font-black uppercase tracking-wider text-slate-700 cursor-pointer gap-2"
+        >
+          <span>Legend</span>
+          <span class="material-symbols-outlined text-[13px] transition-transform duration-200" :class="{ 'rotate-180': !isLegendOpen }">
+            keyboard_arrow_down
+          </span>
+        </div>
+        
+        <!-- Legend Items Container -->
+        <div v-show="isLegendOpen" class="flex flex-col gap-1.5 mt-1 border-t border-slate-200/60 pt-1.5">
+          <!-- OLT -->
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-3 bg-[#0050cb] rounded border border-white shadow-sm flex items-center justify-center font-black text-[6px] text-white">OLT</div>
+            <span>OLT (Pusat)</span>
           </div>
-       </div>
+          <!-- ODC -->
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-2 bg-[#64748b] rounded border border-white shadow-sm"></div>
+            <span>ODC</span>
+          </div>
+          <!-- ODP -->
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-2 bg-[#d97706] rounded border border-white shadow-sm"></div>
+            <span>ODP</span>
+          </div>
+          <!-- ODP Mass LOS -->
+          <div class="flex items-center gap-2">
+            <div class="w-3 h-2 bg-[#dc2626] rounded border border-white shadow-sm animate-pulse"></div>
+            <span class="text-red-600 font-bold">ODP LOS</span>
+          </div>
+          <!-- Client Online -->
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 bg-[#16a34a] rounded-full border border-white shadow-sm"></div>
+            <span>Online</span>
+          </div>
+          <!-- Client Lemah -->
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 bg-[#f59e0b] rounded-full border border-white shadow-sm"></div>
+            <span>&gt;-27dB</span>
+          </div>
+          <!-- Client Offline -->
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 bg-[#dc2626] rounded-full border border-white shadow-sm animate-pulse"></div>
+            <span class="text-red-600 font-bold">LOS</span>
+          </div>
+          <!-- Client Mati Listrik -->
+          <div class="flex items-center gap-2">
+            <div class="w-2.5 h-2.5 bg-[#dc2626] rounded-full border border-white shadow-sm flex items-center justify-center text-[7px]">🔌</div>
+            <span>Mati Listrik</span>
+          </div>
+        </div>
+      </div>
     </div>
     
     <!-- Device Detail & Alur Modal -->
@@ -1580,24 +2126,24 @@ watch(unmappedClients, (clients) => {
   z-index: 20;
   display: grid;
   place-items: center;
-  width: 56px;
-  height: 56px;
+  width: 40px;
+  height: 40px;
   border: 1px solid rgba(255, 255, 255, 0.75);
   border-radius: 999px;
   background: #0050cb;
   color: #fff;
-  box-shadow: 0 18px 36px rgba(0, 80, 203, 0.34);
+  box-shadow: 0 8px 20px rgba(0, 80, 203, 0.3);
   cursor: pointer;
   transition: transform 0.16s ease, box-shadow 0.16s ease;
 }
 
 .floating-add-node:hover {
   transform: translateY(-2px);
-  box-shadow: 0 22px 42px rgba(0, 80, 203, 0.42);
+  box-shadow: 0 12px 24px rgba(0, 80, 203, 0.38);
 }
 
 .floating-add-node .material-symbols-outlined {
-  font-size: 30px;
+  font-size: 22px;
 }
 
 .is-placing-device :deep(.leaflet-container),
