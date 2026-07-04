@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import LeafletMap from './components/Map.vue'
 import AddDeviceModal from './components/AddDeviceModal.vue'
 import LoginScreen from './components/LoginScreen.vue'
@@ -9,12 +9,22 @@ import { store } from './store'
 
 const isLoggedIn = ref(false)
 const isRouterModalOpen = ref(false)
+const queueCount = ref(0)
+
+const handleQueueCount = (event) => {
+  queueCount.value = event.detail?.count || 0
+}
 
 onMounted(() => {
+  window.addEventListener('customer-queue-count', handleQueueCount)
   if (localStorage.getItem('wiremap_token')) {
     isLoggedIn.value = true
     checkConnectionSettings()
   }
+})
+
+onUnmounted(() => {
+  window.removeEventListener('customer-queue-count', handleQueueCount)
 })
 
 const checkConnectionSettings = async () => {
@@ -40,6 +50,10 @@ const handleLogout = () => {
 
 const handleSyncRequest = () => {
   window.dispatchEvent(new CustomEvent('sync-mikrotik'))
+}
+
+const openProvisioningQueue = () => {
+  window.dispatchEvent(new CustomEvent('open-provisioning-queue'))
 }
 
 const handleSaveDevice = async (deviceData) => {
@@ -72,12 +86,23 @@ const handleSaveDevice = async (deviceData) => {
         </div>
         <nav class="hidden md:flex items-center gap-1 h-full">
           <span class="text-primary border-b-2 border-primary px-3 py-2 text-xs font-semibold">Topology</span>
-          <span class="text-on-surface-variant hover:bg-surface-container-high px-3 py-2 rounded text-xs font-semibold transition-colors">Dashboard</span>
+          <button @click="openProvisioningQueue" class="relative text-on-surface-variant hover:bg-surface-container-high px-3 py-2 rounded text-xs font-semibold transition-colors border-0 bg-transparent cursor-pointer">
+            Fiber Queue
+            <span v-if="queueCount" class="absolute -right-1 -top-1 min-w-[18px] h-[18px] rounded-full bg-primary text-on-primary text-[10px] font-black flex items-center justify-center px-1">
+              {{ queueCount }}
+            </span>
+          </button>
           <span class="text-on-surface-variant hover:bg-surface-container-high px-3 py-2 rounded text-xs font-semibold transition-colors">Analytics</span>
         </nav>
       </div>
 
       <div class="flex items-center gap-2">
+        <button @click="openProvisioningQueue" class="md:hidden relative w-9 h-9 rounded border border-outline-variant bg-surface-container-lowest hover:bg-surface-container-high text-on-surface-variant flex items-center justify-center transition-colors cursor-pointer" title="Fiber Queue">
+          <span class="material-symbols-outlined text-[20px]">dynamic_feed</span>
+          <span v-if="queueCount" class="absolute -right-1 -top-1 min-w-[17px] h-[17px] rounded-full bg-primary text-on-primary text-[9px] font-black flex items-center justify-center px-1">
+            {{ queueCount }}
+          </span>
+        </button>
         <button @click="isRouterModalOpen = true" class="hidden sm:flex items-center gap-2 bg-surface-container-lowest hover:bg-surface-container-high border border-outline-variant text-on-surface px-3 py-2 rounded text-xs font-semibold shadow-sm transition-colors cursor-pointer">
           <span class="material-symbols-outlined text-[18px] text-primary">settings_ethernet</span>
           <span class="hidden lg:inline">Connection Settings</span>

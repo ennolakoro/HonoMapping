@@ -14,6 +14,8 @@ const isSavingDetails = ref(false)
 const saveMessage = ref('')
 const routeParentId = ref('')
 const routeMessage = ref('')
+const pppoeCredential = ref(null)
+const pppoeCredentialStatus = ref('')
 
 const detailForm = ref({
   name: '',
@@ -30,6 +32,8 @@ watch(() => props.device, (device) => {
   if (!device) return
   saveMessage.value = ''
   routeMessage.value = ''
+  pppoeCredential.value = null
+  pppoeCredentialStatus.value = ''
   routeParentId.value = device.parentId || ''
   detailForm.value = {
     name: device.name || '',
@@ -40,6 +44,20 @@ watch(() => props.device, (device) => {
     lng: device.lng || 0,
     capacity: device.capacity || '',
     portsCount: device.portsCount || ''
+  }
+}, { immediate: true })
+
+watch(() => [props.isOpen, props.device?.pppoeUsername], async ([isOpen, username]) => {
+  pppoeCredential.value = null
+  pppoeCredentialStatus.value = ''
+  if (!isOpen || !username) return
+
+  try {
+    pppoeCredentialStatus.value = 'Memuat PPPoE...'
+    pppoeCredential.value = await api.getPppoeCredential(username)
+    pppoeCredentialStatus.value = ''
+  } catch (err) {
+    pppoeCredentialStatus.value = err.message || 'Gagal mengambil PPPoE'
   }
 }, { immediate: true })
 
@@ -226,10 +244,94 @@ const handleRemoveRoute = async () => {
     routeMessage.value = 'Gagal hapus route: ' + err.message
   }
 }
+
+const showConfigForm = ref(false)
+const isPushingConfig = ref(false)
+const configMessage = ref('')
+const configForm = ref({
+  pppoeUsername: '',
+  pppoePassword: '',
+  wifiSsid: '',
+  wifiPassword: '',
+  wifiSsid5g: '',
+  wifiPassword5g: ''
+})
+
+const handleOpenConfig = () => {
+  showConfigForm.value = !showConfigForm.value
+  if (showConfigForm.value) {
+    configForm.value = {
+      pppoeUsername: props.device?.pppoeUsername || '',
+      pppoePassword: '', // Password tidak ditarik dari DB untuk keamanan, biarkan kosong kecuali ingin ganti
+      wifiSsid: props.device?.wifiSsid || '',
+      wifiPassword: props.device?.wifiPassword || '',
+      wifiSsid5g: props.device?.wifiSsid5g || '',
+      wifiPassword5g: props.device?.wifiPassword5g || ''
+    }
+    configMessage.value = ''
+  }
+}
+
+const handlePushConfig = async () => {
+  if (!props.device?.lanIp && !props.device?.wanIp) {
+    configMessage.value = 'Gagal: IP Modem tidak diketahui.'
+    return
+  }
+
+  isPushingConfig.value = true
+  configMessage.value = 'Memproses...'
+
+  try {
+    const params = []
+    
+    if (configForm.value.pppoeUsername) {
+      params.push({ name: 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username', value: configForm.value.pppoeUsername, type: 'string' })
+    }
+    if (configForm.value.pppoePassword) {
+      params.push({ name: 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password', value: configForm.value.pppoePassword, type: 'string' })
+    }
+    if (configForm.value.wifiSsid) {
+      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID', value: configForm.value.wifiSsid, type: 'string' })
+    }
+    if (configForm.value.wifiPassword) {
+      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey', value: configForm.value.wifiPassword, type: 'string' })
+    }
+    if (configForm.value.wifiSsid5g) {
+      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID', value: configForm.value.wifiSsid5g, type: 'string' })
+    }
+    if (configForm.value.wifiPassword5g) {
+      params.push({ name: 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey', value: configForm.value.wifiPassword5g, type: 'string' })
+    }
+
+    if (params.length === 0) {
+      configMessage.value = 'Tidak ada parameter yang diisi.'
+      isPushingConfig.value = false
+      return
+    }
+
+    const payload = {
+      deviceId: props.device.id,
+      params
+    }
+
+    const targetIp = props.device.lanIp || props.device.wanIp
+    const res = await api.pushModemConfig(targetIp, payload)
+    
+    configMessage.value = res.message || 'Konfigurasi terkirim.'
+    // Sembunyikan form setelah 3 detik
+    setTimeout(() => {
+      showConfigForm.value = false
+    }, 3000)
+  } catch (err) {
+    configMessage.value = 'Gagal mengirim: ' + err.message
+  } finally {
+    isPushingConfig.value = false
+  }
+}
 </script>
 
 <template>
-  <div v-if="isOpen" class="client-detail-overlay">
+  <div v-if="isOpen" class="client-detail-overlay" :class="{ 'is-client': device?.type === 'CLIENT' }">
     <article class="client-detail-panel">
       <header class="detail-header">
         <div class="header-main">
@@ -287,7 +389,7 @@ const handleRemoveRoute = async () => {
           </div>
         </section>
 
-        <section class="detail-card">
+        <section v-if="device?.type === 'CLIENT'" class="detail-card">
           <div class="section-title-row compact">
             <div>
               <span class="section-eyebrow">Pelanggan</span>
@@ -304,17 +406,17 @@ const handleRemoveRoute = async () => {
               <input v-model="detailForm.name" required />
             </label>
 
-            <label v-if="device?.type === 'CLIENT'" class="form-field full">
+            <label class="form-field full">
               <span>No. WA</span>
               <input v-model="detailForm.phone" placeholder="08xxxxxxxxxx" />
             </label>
 
-            <label v-if="device?.type === 'CLIENT'" class="form-field">
+            <label class="form-field">
               <span>PPPoE</span>
               <input v-model="detailForm.pppoeUsername" />
             </label>
 
-            <label v-if="device?.type === 'CLIENT'" class="form-field">
+            <label class="form-field">
               <span>SN Modem</span>
               <input v-model="detailForm.snModem" class="mono" />
             </label>
@@ -327,29 +429,150 @@ const handleRemoveRoute = async () => {
           </form>
         </section>
 
-        <section v-if="device?.type !== 'OLT'" class="route-card">
+        <!-- Konfigurasi TR-069 -->
+        <section v-if="device?.type === 'CLIENT'" class="detail-card config-card">
           <div class="card-heading split">
             <div>
-              <span class="material-symbols-outlined">route</span>
-              <h3>Route</h3>
+              <span class="material-symbols-outlined">settings_suggest</span>
+              <h3>Konfigurasi CPE</h3>
             </div>
-            <button type="button" @click="handleRemoveRoute" :disabled="!device?.parentId" title="Hapus route">
-              <span class="material-symbols-outlined">link_off</span>
+            <button @click="handleOpenConfig" class="icon-action outline" :class="{ 'is-active': showConfigForm }">
+              <span class="material-symbols-outlined">{{ showConfigForm ? 'expand_less' : 'tune' }}</span>
             </button>
           </div>
-          <div class="route-editor">
-            <select v-model="routeParentId">
-              <option value="">Tanpa uplink</option>
-              <option v-for="parent in compatibleParents" :key="parent.id" :value="parent.id">
-                {{ parent.name }} ({{ parent.type }})
-              </option>
-            </select>
-            <button type="button" @click="handleSaveRoute">
-              <span class="material-symbols-outlined">done</span>
-            </button>
+          
+          <div v-if="showConfigForm" class="config-form-container mt-3">
+            <span v-if="configMessage" class="save-message mb-3" :class="{ 'is-error': configMessage.startsWith('Gagal') }">
+              {{ configMessage }}
+            </span>
+            <form @submit.prevent="handlePushConfig" class="customer-form">
+              <label class="form-field full">
+                <span>PPPoE Username</span>
+                <input v-model="configForm.pppoeUsername" placeholder="username@isp" />
+              </label>
+              <label class="form-field full">
+                <span>PPPoE Password</span>
+                <input v-model="configForm.pppoePassword" type="password" placeholder="Biarkan kosong jika tidak diubah" />
+              </label>
+              
+              <div class="divider-line"></div>
+              
+              <label class="form-field full">
+                <span>SSID 2.4GHz</span>
+                <input v-model="configForm.wifiSsid" placeholder="Nama WiFi 2.4G" />
+              </label>
+              <label class="form-field full">
+                <span>Password 2.4GHz</span>
+                <input v-model="configForm.wifiPassword" type="text" placeholder="Biarkan kosong jika tidak diubah" />
+              </label>
+
+              <button type="submit" :disabled="isPushingConfig" class="save-button push-btn mt-3">
+                <span v-if="isPushingConfig" class="material-symbols-outlined spin">refresh</span>
+                <span v-else class="material-symbols-outlined">send</span>
+                Push ke Modem (TR-069)
+              </button>
+            </form>
           </div>
-          <div v-if="routeMessage" class="route-message" :class="{ 'is-error': routeMessage.startsWith('Gagal') }">
-            {{ routeMessage }}
+        </section>
+
+        <!-- Node ODP / ODC Section -->
+        <section v-else-if="device?.type === 'ODC' || device?.type === 'ODP'" class="detail-card node-card">
+          <div class="card-heading split">
+            <div>
+              <span class="material-symbols-outlined">hub</span>
+              <h3>Node {{ device?.type }}</h3>
+            </div>
+            <span v-if="saveMessage" class="save-message" :class="{ 'is-error': saveMessage.startsWith('Gagal') }">
+              {{ saveMessage }}
+            </span>
+          </div>
+
+          <form @submit.prevent="handleSaveDetails" class="node-form">
+            <label class="form-field full">
+              <span>Nama Node</span>
+              <input v-model="detailForm.name" required />
+            </label>
+            
+            <label class="form-field full">
+              <span>Uplink (Route)</span>
+              <div class="route-editor-modern">
+                <select v-model="routeParentId" @change="handleSaveRoute">
+                  <option value="">Tanpa uplink</option>
+                  <option v-for="parent in compatibleParents" :key="parent.id" :value="parent.id">
+                    {{ parent.name }} ({{ parent.type }})
+                  </option>
+                </select>
+                <button v-if="routeParentId" type="button" @click.prevent="handleRemoveRoute" title="Hapus Uplink" class="btn-remove-route">
+                  <span class="material-symbols-outlined">link_off</span>
+                </button>
+              </div>
+            </label>
+            <div v-if="routeMessage" class="route-message" :class="{ 'is-error': routeMessage.startsWith('Gagal') }">
+              {{ routeMessage }}
+            </div>
+
+            <button type="submit" :disabled="isSavingDetails" class="save-button compact-btn">
+              <span v-if="isSavingDetails" class="material-symbols-outlined spin">refresh</span>
+              <span v-else class="material-symbols-outlined">save</span>
+              Simpan Nama
+            </button>
+          </form>
+
+          <div class="info-list compact-info mt-4">
+            <div class="info-row"><span>Lat</span><strong class="mono">{{ displayValue(device?.lat) }}</strong></div>
+            <div class="info-row"><span>Long</span><strong class="mono">{{ displayValue(device?.lng) }}</strong></div>
+          </div>
+
+          <div class="port-section mt-4">
+            <div class="card-heading compact">
+              <span class="material-symbols-outlined">lan</span>
+              <h4>Port {{ device?.type }}</h4>
+            </div>
+            <div class="port-box-grid">
+              <span
+                v-for="port in topologyPortItems"
+                :key="port.number"
+                class="port-box"
+                :class="{ 'is-used': port.child }"
+                :title="port.child ? `${port.child.type} - ${port.child.name}` : 'Kosong'"
+              >
+                {{ port.number }}
+              </span>
+            </div>
+          </div>
+        </section>
+
+        <!-- OLT Section -->
+        <section v-else class="detail-card node-card">
+          <div class="card-heading">
+            <span class="material-symbols-outlined">dns</span>
+            <h3>Server OLT</h3>
+          </div>
+          <div class="info-list mt-3">
+            <div class="info-row"><span>Nama</span><strong>{{ displayValue(device?.name) }}</strong></div>
+            <div class="info-row"><span>Lat</span><strong class="mono">{{ displayValue(device?.lat) }}</strong></div>
+            <div class="info-row"><span>Long</span><strong class="mono">{{ displayValue(device?.lng) }}</strong></div>
+          </div>
+        </section>
+
+        <section v-if="device?.type === 'CLIENT' && device?.pppoeUsername" class="info-card">
+          <div class="card-heading split">
+            <div>
+              <span class="material-symbols-outlined">vpn_key</span>
+              <h3>PPPoE Aktif</h3>
+            </div>
+            <strong :class="{ 'is-online': pppoeCredential?.isActive }">
+              {{ pppoeCredential?.isActive ? 'Active' : 'Offline' }}
+            </strong>
+          </div>
+          <div class="info-list">
+            <div class="info-row"><span>User</span><strong class="mono">{{ displayValue(pppoeCredential?.username || device.pppoeUsername) }}</strong></div>
+            <div class="info-row"><span>Password</span><strong class="mono" :title="pppoeCredential?.password">{{ passwordValue(pppoeCredential?.password) }}</strong></div>
+            <div class="info-row"><span>IP Aktif</span><strong class="mono">{{ displayValue(pppoeCredential?.address || device.wanIp || device.lanIp) }}</strong></div>
+            <div class="info-row"><span>Uptime</span><strong>{{ displayValue(pppoeCredential?.uptime) }}</strong></div>
+          </div>
+          <div v-if="pppoeCredentialStatus || pppoeCredential?.secretError || pppoeCredential?.activeError" class="credential-note">
+            {{ pppoeCredentialStatus || pppoeCredential?.secretError || pppoeCredential?.activeError }}
           </div>
         </section>
 
@@ -378,75 +601,71 @@ const handleRemoveRoute = async () => {
               <div class="info-row"><span>Hardware</span><strong>{{ displayValue(device.hardwareVersion) }}</strong></div>
               <div class="info-row"><span>Software</span><strong :title="device.softwareVersion">{{ displayValue(device.softwareVersion) }}</strong></div>
               <div class="info-row"><span>MAC</span><strong class="mono" :title="device.macAddress">{{ displayValue(device.macAddress) }}</strong></div>
-              <div class="info-row"><span>WAN IP</span><strong class="mono">{{ displayValue(device.wanIp) }}</strong></div>
+              <div class="info-row"><span>WAN IP</span><strong class="mono">{{ displayValue(device.wanIp || pppoeCredential?.address) }}</strong></div>
+              <div class="info-row"><span>Mgmt IP</span><strong class="mono">{{ displayValue(device.lanIp) }}</strong></div>
             </div>
           </section>
 
-          <section class="info-card">
+          <section class="info-card network-hosts-card">
             <div class="card-heading split">
               <div>
-                <span class="material-symbols-outlined">settings_ethernet</span>
-                <h3>LAN & Session</h3>
+                <span class="material-symbols-outlined">devices</span>
+                <h3>Perangkat Terhubung</h3>
               </div>
-              <strong>{{ displayValue(device.associatedDevices, 0) }} device</strong>
+              <div class="host-count-badge">
+                <strong>{{ displayValue(device.associatedDevices, 0) }}</strong> WiFi Aktif
+              </div>
             </div>
-            <div class="lan-grid">
+            
+            <div class="lan-grid mb-3">
               <div v-for="port in lanPortsList" :key="port.name" class="lan-port" :class="{ 'is-up': port.isUp }">
                 <span>{{ port.name }}</span>
                 <strong>{{ port.speed }}</strong>
               </div>
             </div>
+
+            <div v-if="device.connectedHosts && device.connectedHosts.length > 0" class="hosts-list">
+              <div v-for="(host, idx) in device.connectedHosts" :key="idx" class="host-item" :class="{ 'is-active': host.active }">
+                <div class="host-icon">
+                  <span class="material-symbols-outlined">
+                    {{ host.hostname.toLowerCase().includes('android') || host.hostname.toLowerCase().includes('iphone') || host.hostname.toLowerCase().includes('phone') ? 'smartphone' : 'laptop_mac' }}
+                  </span>
+                </div>
+                <div class="host-details">
+                  <div class="host-name">{{ host.hostname }}</div>
+                  <div class="host-ip mono">{{ host.ip }}</div>
+                  <div class="host-mac mono">{{ host.mac }}</div>
+                </div>
+                <div class="host-status">
+                  <span class="status-dot"></span>
+                </div>
+              </div>
+            </div>
+            <div v-else class="hosts-empty">
+              Tidak ada data perangkat yang ditarik dari modem. Coba Refresh.
+            </div>
           </section>
         </template>
 
-        <section v-else-if="device?.type === 'ODC' || device?.type === 'ODP'" class="info-card">
-          <div class="card-heading">
-            <span class="material-symbols-outlined">hub</span>
-            <h3>Port {{ device?.type }}</h3>
-          </div>
-          <div class="port-box-grid">
-            <span
-              v-for="port in topologyPortItems"
-              :key="port.number"
-              class="port-box"
-              :class="{ 'is-used': port.child }"
-              :title="port.child ? `${port.child.type} - ${port.child.name}` : 'Kosong'"
-            >
-              {{ port.number }}
-            </span>
-          </div>
-          <div class="info-list compact-info">
-            <div class="info-row"><span>Koordinat</span><strong class="mono">{{ displayValue(device?.lat) }}, {{ displayValue(device?.lng) }}</strong></div>
-          </div>
-        </section>
-
-        <section v-else class="info-card">
-          <div class="card-heading">
-            <span class="material-symbols-outlined">router</span>
-            <h3>OLT</h3>
-          </div>
-          <div class="info-list">
-            <div class="info-row"><span>Type</span><strong>{{ displayValue(device?.type) }}</strong></div>
-            <div class="info-row"><span>Nama</span><strong>{{ displayValue(device?.name) }}</strong></div>
-            <div class="info-row"><span>Koordinat</span><strong class="mono">{{ displayValue(device?.lat) }}, {{ displayValue(device?.lng) }}</strong></div>
-          </div>
-        </section>
-
-        <section class="topology-card">
+        <section class="topology-card modern-flow">
           <div class="card-heading">
             <span class="material-symbols-outlined">account_tree</span>
             <h3>Alur Topologi</h3>
           </div>
-          <div class="topology-flow">
+          <div class="topology-tree">
             <template v-for="(node, index) in devicePath" :key="node.id">
-              <div class="flow-node" :class="`type-${node.type}`">
-                <span class="flow-dot"></span>
-                <strong>{{ node.type }}</strong>
-                <small>{{ node.name }}</small>
+              <div class="tree-node" :class="[`type-${node.type}`, { 'is-current': node.id === device?.id }]">
+                <div class="tree-icon">
+                  <span class="material-symbols-outlined">
+                    {{ node.type === 'OLT' ? 'dns' : node.type === 'ODC' ? 'meeting_room' : node.type === 'ODP' ? 'hub' : 'router' }}
+                  </span>
+                </div>
+                <div class="tree-info">
+                  <strong>{{ node.type }}</strong>
+                  <span>{{ node.name }}</span>
+                </div>
               </div>
-              <span v-if="index < devicePath.length - 1" class="flow-link">
-                <span class="material-symbols-outlined">east</span>
-              </span>
+              <div v-if="index < devicePath.length - 1" class="tree-line"></div>
             </template>
           </div>
         </section>
@@ -458,37 +677,55 @@ const handleRemoveRoute = async () => {
 <style scoped>
 .client-detail-overlay {
   position: fixed;
-  inset: 0;
-  z-index: 100;
+  top: 80px;
+  right: 24px;
+  bottom: 24px;
+  width: 340px;
+  max-width: calc(100vw - 48px);
+  z-index: 1000;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 14px;
-  background: rgba(15, 23, 42, 0.4);
-  backdrop-filter: blur(6px);
+  justify-content: flex-end;
+  pointer-events: none;
+  transition: width 0.3s ease;
+}
+
+.client-detail-overlay.is-client {
+  width: 440px;
 }
 
 .client-detail-panel {
-  width: min(420px, calc(100vw - 24px));
-  max-height: calc(100vh - 40px);
-  overflow: hidden;
+  width: 100%;
+  height: fit-content;
+  max-height: 100%;
+  overflow-y: auto;
   border: 1px solid rgba(59, 130, 246, 0.25);
   border-radius: 16px;
-  background: rgba(10, 25, 47, 0.65);
+  background: rgba(10, 25, 47, 0.85);
   color: #e5edf8;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5), 0 0 40px rgba(59, 130, 246, 0.1);
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5), 0 0 40px rgba(59, 130, 246, 0.1);
   backdrop-filter: blur(25px) saturate(180%);
   display: flex;
   flex-direction: column;
+  pointer-events: auto;
+  animation: scaleInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes scaleInRight {
+  from { transform: translateX(20px) scale(0.95); opacity: 0; }
+  to { transform: translateX(0) scale(1); opacity: 1; }
 }
 
 .detail-header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px 16px;
-  background: rgba(15, 32, 66, 0.45);
+  padding: 18px 20px;
+  background: rgba(15, 32, 66, 0.85);
+  backdrop-filter: blur(10px);
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
 }
 
@@ -906,6 +1143,21 @@ h3 {
   font-size: 11px;
 }
 
+.card-heading.split > strong.is-online {
+  background: rgba(16, 185, 129, 0.14);
+  color: #86efac;
+}
+
+.credential-note {
+  margin-top: 10px;
+  border-radius: 9px;
+  background: rgba(245, 158, 11, 0.1);
+  color: #fde68a;
+  padding: 8px;
+  font-size: 11px;
+  font-weight: 800;
+}
+
 .info-list {
   display: grid;
   gap: 7px;
@@ -1081,5 +1333,247 @@ h3 {
   to {
     transform: rotate(360deg);
   }
+}
+
+/* Modern Form Elements */
+.node-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.route-editor-modern {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.route-editor-modern select {
+  flex: 1;
+  background: rgba(15, 32, 66, 0.4);
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  color: #f8fafc;
+  padding: 8px 12px;
+  border-radius: 8px;
+  outline: none;
+  font-size: 13px;
+  font-weight: 600;
+  transition: all 0.2s;
+}
+
+.route-editor-modern select:focus {
+  border-color: #60a5fa;
+  background: rgba(15, 32, 66, 0.8);
+}
+
+.btn-remove-route {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  background: rgba(239, 68, 68, 0.1);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.btn-remove-route:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.compact-btn {
+  margin-top: 8px;
+}
+
+/* Topology Tree */
+.topology-tree {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  padding: 4px 8px;
+}
+
+.tree-node {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 10px 14px;
+  background: rgba(15, 32, 66, 0.4);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  border-radius: 12px;
+  position: relative;
+  transition: all 0.2s;
+}
+
+.tree-node.is-current {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(96, 165, 250, 0.4);
+  box-shadow: 0 4px 20px rgba(59, 130, 246, 0.2);
+}
+
+.tree-icon {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.tree-node.type-OLT .tree-icon { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+.tree-node.type-ODC .tree-icon { background: rgba(148, 163, 184, 0.2); color: #94a3b8; }
+.tree-node.type-ODP .tree-icon { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+.tree-node.type-CLIENT .tree-icon { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+
+.tree-info {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.tree-info strong {
+  font-size: 12px;
+  font-weight: 800;
+  color: #f8fafc;
+  text-transform: uppercase;
+}
+
+.tree-info span {
+  font-size: 12px;
+  color: #94a3b8;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-line {
+  width: 2px;
+  height: 24px;
+  background: linear-gradient(to bottom, rgba(59, 130, 246, 0.4), rgba(59, 130, 246, 0.1));
+  margin: 0 0 0 31px;
+}
+
+/* Connected Hosts List */
+.network-hosts-card {
+  padding-bottom: 20px;
+}
+.host-count-badge {
+  font-size: 11px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+.hosts-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+}
+.host-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: rgba(15, 32, 66, 0.5);
+  border: 1px solid rgba(148, 163, 184, 0.1);
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+.host-item:hover {
+  background: rgba(59, 130, 246, 0.1);
+  border-color: rgba(59, 130, 246, 0.3);
+}
+.host-item.is-active {
+  border-left: 3px solid #10b981;
+}
+.host-icon {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 6px;
+  color: #94a3b8;
+}
+.host-icon .material-symbols-outlined {
+  font-size: 15px;
+}
+.host-item.is-active .host-icon {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.1);
+}
+.host-details {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.host-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f8fafc;
+}
+.host-ip, .host-mac {
+  font-size: 9.5px;
+  color: #94a3b8;
+}
+.host-status {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #64748b;
+}
+.host-item.is-active .status-dot {
+  background: #10b981;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+.hosts-empty {
+  text-align: center;
+  padding: 12px;
+  font-size: 10px;
+  color: #64748b;
+  background: rgba(15, 32, 66, 0.3);
+  border-radius: 8px;
+  margin-top: 8px;
+}
+
+/* Config TR-069 Section */
+.config-card {
+  border: 1px solid rgba(59, 130, 246, 0.3);
+  background: linear-gradient(to bottom, rgba(59, 130, 246, 0.08), rgba(15, 32, 66, 0.8));
+}
+.config-form-container {
+  padding-top: 12px;
+  border-top: 1px dashed rgba(255, 255, 255, 0.1);
+  animation: fadeIn 0.3s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.divider-line {
+  width: 100%;
+  height: 1px;
+  background: rgba(255, 255, 255, 0.1);
+  margin: 14px 0;
+}
+.push-btn {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  width: 100%;
+}
+.push-btn:hover {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  box-shadow: 0 4px 15px rgba(59, 130, 246, 0.4);
 }
 </style>

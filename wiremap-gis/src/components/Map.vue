@@ -19,7 +19,7 @@ const plotError = ref('')
 const syncStatus = ref('')
 const informStatus = ref('')
 const isInformingAll = ref(false)
-const isWorkflowOpen = ref(true)
+const isWorkflowOpen = ref(false)
 const workflowSearch = ref('')
 // Filter antrian: 'ALL' | 'PPPOE' | 'HOTSPOT'
 const queueFilter = ref('ALL')
@@ -33,16 +33,17 @@ const startProgressPolling = () => {
     try {
       const statusMap = await api.getModemSyncStatus()
       syncProgressMap.value = { ...syncProgressMap.value, ...statusMap }
+      await loadDevices()
 
       const activeSyncs = Object.values(syncProgressMap.value).some(
         info => info.status === 'triggered' || info.status === 'connected' || info.status === 'fetching'
       )
+      const waitingPersistedData = allDevicesData.value.some(device =>
+        device.type === 'CLIENT' && !hasCoords(device) && isClientWaitingPersistedData(device)
+      )
 
-      if (activeSyncs) {
-        await loadDevices()
-      } else {
+      if (!activeSyncs && !waitingPersistedData) {
         stopProgressPolling()
-        await loadDevices()
       }
     } catch (err) {
       console.error('Gagal poll status sinkronisasi:', err)
@@ -88,6 +89,7 @@ const getSyncProgress = (client) => {
   const info = syncProgressMap.value[ip]
   if (!info) return null
   if (info.status === 'idle') return null
+  if ((info.status === 'success' || info.status === 'failed') && Date.now() - (info.updatedAt || 0) > 90000) return null
   return info
 }
 
@@ -101,12 +103,16 @@ const getSyncProgressMessage = (info) => {
   if (info.status === 'triggered') return 'Menghubungi CPE...'
   if (info.status === 'connected') return 'Terhubung, mengautentikasi...'
   if (info.status === 'fetching') return 'Mengambil data...'
-  if (info.status === 'success') return 'Selesai!'
+  if (info.status === 'success') return 'Selesai, memuat data tersimpan...'
   if (info.status === 'failed') return `Gagal: ${info.error || 'Fault/Timeout'}`
   return ''
 }
 
 const informSingleClient = async (client) => {
+  if (isClientReadyForPlot(client)) {
+    informStatus.value = `${client.name} sudah selesai Inform. Silakan langsung Plot.`
+    return
+  }
   const ip = getClientTriggerIp(client)
   if (!ip) return
   try {
@@ -173,6 +179,20 @@ const hasModemData = (device) => [
   device?.voltage
 ].some(value => value !== null && value !== undefined && value !== '')
 
+const isClientWaitingPersistedData = (device) =>
+  !hasModemData(device) && getSyncProgress(device)?.status === 'success'
+
+const isClientReadyForPlot = (device) => hasModemData(device)
+
+const canPlotClient = (device) => [
+  device?.pppoeUsername,
+  device?.lanIp,
+  device?.wanIp,
+  device?.triggerIp,
+  device?.snModem,
+  device?.name
+].some(value => value !== null && value !== undefined && value !== '')
+
 const matchesWorkflowSearch = (device) => {
   const query = workflowSearch.value.trim().toLowerCase()
   if (!query) return true
@@ -185,17 +205,38 @@ const matchesWorkflowSearch = (device) => {
   ].some(value => String(value || '').toLowerCase().includes(query))
 }
 
+const getQueuePriority = (device) => {
+  let score = 0
+  if (isClientReadyForPlot(device)) score += 100
+  if (device?.pppoeUsername) score += 40
+  if (device?.snModem) score += 30
+  if (device?.clientType !== 'HOTSPOT') score += 20
+  if (String(device?.name || '').startsWith('ONT-')) score += 10
+  return score
+}
+
 const visibleUnmappedClients = computed(() => {
-  return unmappedClients.value.filter(d => {
+  const filtered = unmappedClients.value.filter(d => {
     if (!matchesWorkflowSearch(d)) return false
     if (queueFilter.value === 'PPPOE') return (d.clientType || 'PPPOE') === 'PPPOE'
     if (queueFilter.value === 'HOTSPOT') return d.clientType === 'HOTSPOT'
     return true
   })
+
+  const byIdentity = new Map()
+  for (const client of filtered) {
+    const key = getClientTriggerIp(client) || client.snModem || client.macAddress || `id:${client.id}`
+    const existing = byIdentity.get(key)
+    if (!existing || getQueuePriority(client) > getQueuePriority(existing)) {
+      byIdentity.set(key, client)
+    }
+  }
+
+  return Array.from(byIdentity.values())
 })
 
 const informableClients = computed(() =>
-  visibleUnmappedClients.value.filter(device => !!getClientTriggerIp(device))
+  visibleUnmappedClients.value.filter(device => !!getClientTriggerIp(device) && !isClientReadyForPlot(device) && !isClientSyncing(device))
 )
 
 const odpOptions = computed(() =>
@@ -248,6 +289,10 @@ const getClientHealth = (device) => {
   if (rx <= -28) return 'offline'
   if (rx <= -26) return 'warning'
   return 'good'
+}
+
+const handleOpenProvisioningQueue = () => {
+  isWorkflowOpen.value = true
 }
 
 let tempPathCoords = []
@@ -603,6 +648,7 @@ const informAllClients = async () => {
   informStatus.value = `Mengirim trigger inform ke ${targets.length} ONT...`
   let success = 0
   let failed = 0
+  const failureMessages = []
 
   for (let index = 0; index < targets.length; index++) {
     const client = targets[index]
@@ -621,6 +667,7 @@ const informAllClients = async () => {
     } catch (err) {
       console.error(`Gagal inform ${client.name}:`, err)
       failed += 1
+      failureMessages.push(`${client.name}: ${err.message || 'Gagal trigger'}`)
       syncProgressMap.value[ip] = {
         id: client.id,
         username: client.name,
@@ -633,7 +680,7 @@ const informAllClients = async () => {
   }
 
   informStatus.value = failed
-    ? `Trigger terkirim: ${success} berhasil, ${failed} gagal. Mulai polling status...`
+    ? `Trigger gagal ${failed}/${targets.length}. ${failureMessages.slice(0, 2).join(' | ')}`
     : `Trigger terkirim ke ${success} ONT. Mulai polling status...`
   isInformingAll.value = false
   
@@ -641,8 +688,17 @@ const informAllClients = async () => {
 }
 
 const startPlotClient = (client) => {
+  if (!canPlotClient(client)) {
+    informStatus.value = `${client.name} belum bisa diplot karena data identitas pelanggan belum lengkap.`
+    return
+  }
+  if (!odpOptions.value.length) {
+    informStatus.value = 'Belum ada ODP di peta. Tambahkan ODP dulu sebelum plotting pelanggan.'
+    return
+  }
   plotError.value = ''
   selectedOdpId.value = odpOptions.value[0]?.id || ''
+  isWorkflowOpen.value = false
   store.startPlotClient(client)
 }
 
@@ -746,7 +802,14 @@ onMounted(() => {
     // Klik di mana saja di peta akan keluar dari mode edit jalur kabel
     clearEditHandles()
 
-    if (store.mapMode === 'ADD_DEVICE') {
+    if (store.mapMode === 'VIEW') {
+      if (isClientModalOpen.value) {
+        isClientModalOpen.value = false
+      }
+      if (isWorkflowOpen.value) {
+        isWorkflowOpen.value = false
+      }
+    } else if (store.mapMode === 'ADD_DEVICE') {
       store.openAddModal(e.latlng.lat, e.latlng.lng)
     } else if (store.mapMode === 'ADD_CABLE') {
       const parentDevice = allDevicesData.value.find(d => d.id === store.selectedParentId)
@@ -800,6 +863,7 @@ onMounted(() => {
   window.addEventListener('tambah-kabel', handleTambahKabelEvent)
   window.addEventListener('lihat-detail', handleLihatDetailEvent)
   window.addEventListener('sync-mikrotik', triggerSync)
+  window.addEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
   
   loadDevices()
 })
@@ -809,7 +873,14 @@ onUnmounted(() => {
   window.removeEventListener('tambah-kabel', handleTambahKabelEvent)
   window.removeEventListener('lihat-detail', handleLihatDetailEvent)
   window.removeEventListener('sync-mikrotik', triggerSync)
+  window.removeEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
 })
+
+watch(unmappedClients, (clients) => {
+  window.dispatchEvent(new CustomEvent('customer-queue-count', {
+    detail: { count: clients.length }
+  }))
+}, { immediate: true })
 </script>
 
 <template>
@@ -837,13 +908,22 @@ onUnmounted(() => {
       <button @click="store.cancelAdd()">Batal</button>
     </div>
 
-    <aside class="workflow-panel">
-      <button class="workflow-toggle" @click="isWorkflowOpen = !isWorkflowOpen" title="Buka/tutup antrian">
-        <span class="text-xs font-bold uppercase tracking-wider text-blue-300">Antrian Pelanggan Baru</span>
-        <span class="material-symbols-outlined text-[18px] text-blue-300">{{ isWorkflowOpen ? 'keyboard_arrow_up' : 'keyboard_arrow_down' }}</span>
-      </button>
+    <div v-if="isWorkflowOpen" class="workflow-modal-backdrop" @click.self="isWorkflowOpen = false">
+      <aside class="workflow-panel">
+        <header class="workflow-toggle">
+          <div class="workflow-title">
+            <span class="material-symbols-outlined">dynamic_feed</span>
+            <div>
+              <strong>Fiber Queue</strong>
+              <small>{{ unmappedClients.length }} pelanggan menunggu plotting</small>
+            </div>
+          </div>
+          <button type="button" class="workflow-close" @click="isWorkflowOpen = false" aria-label="Tutup Fiber Queue">
+            <span class="material-symbols-outlined">close</span>
+          </button>
+        </header>
 
-      <div v-if="isWorkflowOpen" class="workflow-body">
+      <div class="workflow-body">
         <div v-if="syncStatus || informStatus" class="workflow-status">{{ informStatus || syncStatus }}</div>
         <label class="workflow-search">
           <span class="material-symbols-outlined">search</span>
@@ -867,17 +947,20 @@ onUnmounted(() => {
         <article v-for="client in visibleUnmappedClients" :key="client.id" class="workflow-client flex-col items-stretch gap-1">
           <div class="flex items-center justify-between w-full">
             <div class="workflow-client-main">
-              <span class="client-node-dot" :class="{ 'is-informed': hasModemData(client) }"></span>
+              <span class="client-node-dot" :class="{ 'is-informed': isClientReadyForPlot(client) }"></span>
               <div class="client-copy">
                 <strong>{{ client.name }}</strong>
                 <div class="flex items-center gap-1 mt-0.5">
                   <span class="text-[9px] px-1 py-0.5 rounded font-bold uppercase tracking-wider leading-none"
-                    :class="hasModemData(client) ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/20' : 'bg-amber-950/80 text-amber-400 border border-amber-500/20'">
-                    {{ hasModemData(client) ? 'Ready Plot' : 'Belum Inform' }}
+                    :class="isClientReadyForPlot(client) ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/20' : (isClientWaitingPersistedData(client) ? 'bg-sky-950/80 text-sky-300 border border-sky-500/20' : 'bg-amber-950/80 text-amber-400 border border-amber-500/20')">
+                    {{ isClientReadyForPlot(client) ? 'Ready Plot' : (isClientWaitingPersistedData(client) ? 'Sinkron Data' : 'Belum Inform') }}
                   </span>
                   <!-- Badge tipe koneksi -->
                   <span class="client-type-badge" :class="client.clientType === 'HOTSPOT' ? 'hotspot' : 'pppoe'">
                     {{ client.clientType === 'HOTSPOT' ? 'Hotspot' : 'PPPoE' }}
+                  </span>
+                  <span class="client-type-badge" :class="hasModemData(client) ? 'pppoe' : 'hotspot'">
+                    {{ hasModemData(client) ? 'ACS tersimpan' : 'ACS pending' }}
                   </span>
                   <span class="text-slate-400 text-[10px] truncate max-w-[90px]">
                     {{ getClientDisplayIp(client) }}
@@ -887,17 +970,31 @@ onUnmounted(() => {
             </div>
             <div class="flex items-center gap-1">
               <button 
+                v-if="!isClientReadyForPlot(client)"
                 type="button" 
                 class="workflow-sync-btn"
                 @click="informSingleClient(client)" 
-                :disabled="!getClientTriggerIp(client) || isClientSyncing(client)"
-                :title="isClientSyncing(client) ? 'Sedang sinkronisasi...' : 'Tarik data inform modem'"
+                :disabled="!getClientTriggerIp(client) || isClientSyncing(client) || isClientWaitingPersistedData(client)"
+                :title="isClientWaitingPersistedData(client) ? 'Menunggu data tersimpan ke client' : (isClientSyncing(client) ? 'Sedang sinkronisasi...' : 'Tarik data inform modem')"
               >
                 <span class="material-symbols-outlined text-sm" :class="{ spin: isClientSyncing(client) }">sensors</span>
               </button>
-              <button @click="startPlotClient(client)" :disabled="!odpOptions.length || !hasModemData(client)" :title="!hasModemData(client) ? 'Tarik inform data modem terlebih dahulu untuk mem-plot client' : 'Plot pelanggan ke peta'">
+              <span v-else class="workflow-ready-pill" title="Data modem sudah tersimpan">
+                <span class="material-symbols-outlined">done</span>
+                Sudah Inform
+              </span>
+              <button
+                v-if="canPlotClient(client)"
+                @click="startPlotClient(client)"
+                :disabled="!odpOptions.length"
+                :title="isClientReadyForPlot(client) ? 'Plot pelanggan ke peta' : 'Plot dulu, data ACS akan menyusul otomatis'"
+              >
                 <span class="material-symbols-outlined">location_on</span>
                 Plot
+              </button>
+              <button v-else type="button" disabled title="Lengkapi identitas pelanggan dulu">
+                <span class="material-symbols-outlined">lock</span>
+                Belum siap
               </button>
             </div>
           </div>
@@ -926,7 +1023,8 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-    </aside>
+      </aside>
+    </div>
 
     <section v-if="store.mapMode === 'PLOT_CLIENT' && store.pendingCoords" class="plot-confirm">
       <div class="plot-title">
@@ -1110,60 +1208,127 @@ onUnmounted(() => {
   }
 }
 
-.workflow-panel {
-  position: absolute;
-  top: 88px;
-  right: 12px;
-  z-index: 10;
-  width: min(268px, calc(100% - 24px));
-  overflow: hidden;
-  border: 1px solid rgba(125, 211, 252, 0.18);
-  border-radius: 14px;
-  background:
-    linear-gradient(135deg, rgba(8, 18, 32, 0.68), rgba(4, 12, 24, 0.46)),
-    radial-gradient(circle at 90% 0%, rgba(59, 130, 246, 0.18), transparent 34%);
-  box-shadow: 0 16px 44px rgba(2, 6, 23, 0.22);
-  backdrop-filter: blur(12px) saturate(1.1);
+.workflow-modal-backdrop {
+  position: fixed;
+  top: 80px;
+  left: 24px;
+  bottom: 24px;
+  width: 340px;
+  max-width: calc(100vw - 48px);
+  z-index: 1000;
+  display: flex;
+  pointer-events: none;
 }
 
+.workflow-panel {
+  width: 100%;
+  height: fit-content;
+  max-height: 100%;
+  overflow-y: auto;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+  border-radius: 16px;
+  background:
+    linear-gradient(135deg, rgba(8, 18, 32, 0.85), rgba(4, 12, 24, 0.75)),
+    radial-gradient(circle at 8% 0%, rgba(59, 130, 246, 0.22), transparent 38%);
+  box-shadow: 0 10px 40px rgba(2, 6, 23, 0.42);
+  backdrop-filter: blur(18px) saturate(1.18);
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  animation: scaleInLeft 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
+@keyframes scaleInLeft {
+  from { transform: translateX(-20px) scale(0.95); opacity: 0; }
+  to { transform: translateX(0) scale(1); opacity: 1; }
+}
 
 .workflow-toggle {
+  position: sticky;
+  top: 0;
+  z-index: 10;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  width: 100%;
-  border: 0;
-  background: rgba(8, 18, 32, 0.54);
+  gap: 14px;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.16);
+  background: rgba(8, 18, 32, 0.42);
   color: #e5edf8;
-  padding: 8px 9px;
-  cursor: pointer;
+  padding: 14px 16px;
 }
 
-.workflow-toggle strong {
+.workflow-title {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 10px;
+}
+
+.workflow-title > .material-symbols-outlined {
   display: grid;
   place-items: center;
-  min-width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  background: rgba(37, 99, 235, 0.72);
-  color: #fff;
-  font-size: 11px;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(96, 165, 250, 0.34);
+  border-radius: 12px;
+  background: rgba(37, 99, 235, 0.18);
+  color: #93c5fd;
+  font-size: 21px;
+}
+
+.workflow-title strong {
+  display: block;
+  color: #f8fafc;
+  font-size: 17px;
   font-weight: 900;
 }
 
-.workflow-toggle .material-symbols-outlined {
-  color: #bfdbfe;
-  font-size: 20px;
+.workflow-title small {
+  display: block;
+  margin-top: 2px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.workflow-close {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.52);
+  color: #cbd5e1;
+  cursor: pointer;
+}
+
+.workflow-close:hover {
+  border-color: rgba(248, 113, 113, 0.58);
+  color: #fca5a5;
+}
+
+.workflow-close .material-symbols-outlined {
+  font-size: 19px;
 }
 
 .workflow-body {
   display: grid;
-  max-height: min(360px, calc(100vh - 150px));
-  gap: 7px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-height: calc(min(82vh, 720px) - 68px);
+  gap: 9px;
   overflow-y: auto;
-  padding: 8px;
+  padding: 12px;
+}
+
+.workflow-status,
+.workflow-empty,
+.workflow-search,
+.queue-filter-bar,
+.workflow-actions {
+  grid-column: 1 / -1;
 }
 
 .workflow-status,
@@ -1294,7 +1459,7 @@ onUnmounted(() => {
   border: 1px solid rgba(148, 163, 184, 0.14);
   border-radius: 10px;
   background: rgba(8, 19, 34, 0.6);
-  padding: 8px;
+  padding: 10px;
 }
 
 .workflow-sync-btn {
@@ -1320,6 +1485,25 @@ onUnmounted(() => {
 .workflow-sync-btn:disabled {
   opacity: 0.4;
   cursor: not-allowed;
+}
+
+.workflow-ready-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 26px;
+  padding: 0 8px;
+  border: 1px solid rgba(16, 185, 129, 0.26);
+  border-radius: 8px;
+  background: rgba(6, 78, 59, 0.22);
+  color: #6ee7b7;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.workflow-ready-pill .material-symbols-outlined {
+  font-size: 14px;
 }
 
 .workflow-progress-container {
@@ -1640,13 +1824,20 @@ onUnmounted(() => {
 }
 
 @media (max-width: 768px) {
-  .workflow-panel {
-    top: 82px;
-    right: 10px;
-    width: min(258px, calc(100% - 20px));
+  .workflow-modal-backdrop {
+    align-items: stretch;
+    padding: 10px;
   }
 
+  .workflow-panel {
+    width: 100%;
+    max-height: 100%;
+  }
 
+  .workflow-body {
+    grid-template-columns: 1fr;
+    max-height: calc(100vh - 92px);
+  }
 
   .plot-confirm {
     right: 12px;

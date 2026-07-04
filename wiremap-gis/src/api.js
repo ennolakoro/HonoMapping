@@ -65,6 +65,23 @@ export const api = {
     return res.json();
   },
 
+  async getPppoeCredential(username) {
+    const res = await fetch(`${API_URL}/protected/mikrotik/pppoe-credential/${encodeURIComponent(username)}`, {
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = {};
+    }
+    if (!res.ok) throw new Error(data.details || data.error || raw || 'Gagal mengambil credential PPPoE');
+    return data;
+  },
+
   async syncMikrotik() {
     const res = await fetch(`${API_URL}/protected/sync-real-mikrotik`, {
       method: 'POST',
@@ -122,8 +139,17 @@ export const api = {
       },
       body: JSON.stringify({ deviceId })
     });
-    if (!res.ok) throw new Error('Gagal sync modem');
-    return res.json();
+    const raw = await res.text();
+    let data = {};
+    try {
+      data = raw ? JSON.parse(raw) : {};
+    } catch {
+      data = {};
+    }
+    if (!res.ok) {
+      throw new Error(data.details || data.error || raw || `Gagal sync modem (${res.status})`);
+    }
+    return data;
   },
 
   async getModemSyncStatus() {
@@ -195,6 +221,19 @@ export const api = {
       body: JSON.stringify({ type })
     });
     if (!res.ok) throw new Error('Gagal menghapus perangkat');
+    return res.json();
+  },
+
+  async pushModemConfig(ip, configData) {
+    const res = await fetch(`${API_URL}/protected/modem/${ip}/config`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(configData)
+    });
+    if (!res.ok) throw new Error('Gagal mengirim konfigurasi ke modem');
     return res.json();
   }
 };
