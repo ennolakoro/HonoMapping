@@ -158,6 +158,18 @@ const lanPortsList = computed(() => {
   }).filter(Boolean)
 })
 
+const connectedHostsList = computed(() =>
+  Array.isArray(props.device?.connectedHosts) ? props.device.connectedHosts : []
+)
+
+const wifiActiveCount = computed(() => {
+  const associated = Number(props.device?.associatedDevices)
+  if (Number.isFinite(associated) && associated > 0) return associated
+  return connectedHostsList.value.filter(host => host?.active !== false).length
+})
+
+const hasHostList = computed(() => connectedHostsList.value.length > 0)
+
 const hasSavedModemData = computed(() => {
   const device = props.device
   if (!device) return false
@@ -613,7 +625,7 @@ const handlePushConfig = async () => {
                 <h3>Perangkat Terhubung</h3>
               </div>
               <div class="host-count-badge">
-                <strong>{{ displayValue(device.associatedDevices, 0) }}</strong> WiFi Aktif
+                <strong>{{ wifiActiveCount }}</strong> WiFi Aktif
               </div>
             </div>
             
@@ -624,8 +636,8 @@ const handlePushConfig = async () => {
               </div>
             </div>
 
-            <div v-if="device.connectedHosts && device.connectedHosts.length > 0" class="hosts-list">
-              <div v-for="(host, idx) in device.connectedHosts" :key="idx" class="host-item" :class="{ 'is-active': host.active }">
+            <div v-if="hasHostList" class="hosts-list">
+              <div v-for="(host, idx) in connectedHostsList" :key="idx" class="host-item" :class="{ 'is-active': host.active }">
                 <div class="host-icon">
                   <span class="material-symbols-outlined">
                     {{ host.hostname.toLowerCase().includes('android') || host.hostname.toLowerCase().includes('iphone') || host.hostname.toLowerCase().includes('phone') ? 'smartphone' : 'laptop_mac' }}
@@ -640,6 +652,9 @@ const handlePushConfig = async () => {
                   <span class="status-dot"></span>
                 </div>
               </div>
+            </div>
+            <div v-else-if="wifiActiveCount > 0" class="hosts-empty">
+              {{ wifiActiveCount }} perangkat WiFi aktif terdeteksi, tetapi modem tidak membuka daftar nama/IP host melalui TR-069.
             </div>
             <div v-else class="hosts-empty">
               Tidak ada data perangkat yang ditarik dari modem. Coba Refresh.

@@ -192,8 +192,18 @@ export function parseGetParameterValuesResponse(xmlString: string) {
   const lanStatus = lanPorts.length > 0 ? lanPorts.join(', ') : null;
 
   // Associated Devices Sum (WLAN 2.4G + 5G)
-  const assoc24 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations') || '0', 10);
-  const assoc50 = parseInt(getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations') || '0', 10);
+  const assoc24 = parseInt(
+    getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations') ||
+    getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDeviceNumberOfEntries') ||
+    '0',
+    10
+  );
+  const assoc50 = parseInt(
+    getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations') ||
+    getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.AssociatedDeviceNumberOfEntries') ||
+    '0',
+    10
+  );
   const totalAssoc = (isNaN(assoc24) ? 0 : assoc24) + (isNaN(assoc50) ? 0 : assoc50);
 
   // Ekstrak Hosts (Daftar perangkat yang terhubung ke LAN/WLAN)
