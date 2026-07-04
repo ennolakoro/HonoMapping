@@ -184,7 +184,8 @@ export function parseInform(xmlString: string) {
   
   // Ambil ConnectionRequestURL yang dikirim modem saat Inform
   const connectionRequestUrl = getParameterValue(xmlString, 'InternetGatewayDevice.ManagementServer.ConnectionRequestURL');
-  const ipAddress = getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress');
+  const ipAddress = getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress') ||
+                    getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress');
   
   // Sesuai best practice, beberapa modem mengirim parameter spesifik ini di Inform
   // Ataupun kita fallback dengan regex sederhana pencarian Value (karena struktur bisa beda-beda)
@@ -302,7 +303,8 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     macAddress: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress') ||
                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.MACAddress') ||
                 getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.BSSID'),
-    wanIp: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress'),
+    wanIp: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress') ||
+           getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress'),
     rxPower: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower') ||
