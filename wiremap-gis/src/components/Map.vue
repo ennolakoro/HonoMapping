@@ -145,6 +145,16 @@ onUnmounted(() => {
 const activeEditDevice = ref(null)
 let editHandles = []
 let editPolyline = null
+const polylineMap = ref({})
+let adjacentCables = []
+
+// Helper: mendeteksi jika dua koordinat dekat (< 5 meter) untuk snapping & co-dragging
+const isCloseCoord = (c1, c2) => {
+  if (!c1 || !c2) return false
+  const latDiff = Math.abs(c1[0] - c2[0])
+  const lngDiff = Math.abs(c1[1] - c2[1])
+  return latDiff < 0.000045 && lngDiff < 0.000045
+}
 
 const clearEditHandles = () => {
   editHandles.forEach(h => {
@@ -180,15 +190,74 @@ const renderEditHandles = () => {
       draggable: true
     }).addTo(map)
 
+    let dragStartCoord = [...coords[i]]
+
+    handle.on('dragstart', () => {
+      dragStartCoord = [...coords[i]]
+    })
+
     handle.on('drag', (ev) => {
       const newLatLng = ev.latlng
-      coords[i] = [newLatLng.lat, newLatLng.lng]
+      const newCoord = [newLatLng.lat, newLatLng.lng]
+      
+      // Snapping: jika dekat dengan salah satu vertex kabel tetangga, snap ke sana!
+      let snappedCoord = newCoord
+      let snapFound = false
+      for (const adj of adjacentCables) {
+        for (const pt of adj.coords) {
+          if (isCloseCoord(newCoord, pt)) {
+            snappedCoord = pt
+            snapFound = true
+            break
+          }
+        }
+        if (snapFound) break
+      }
+      
+      coords[i] = snappedCoord
       editPolyline.setLatLngs(coords)
       if (editPolyline.clickPolyline) {
         editPolyline.clickPolyline.setLatLngs(coords)
       }
+
+      // Geser bersama (co-drag) kabel tetangga yang posisinya berimpitan dengan koordinat dragStart
+      adjacentCables.forEach(adj => {
+        let changed = false
+        adj.coords.forEach((pt, idx) => {
+          // Lewati titik ujung (0 dan length-1) agar posisi fisik ODP / CPE tidak bergeser
+          if (idx > 0 && idx < adj.coords.length - 1) {
+            if (isCloseCoord(pt, dragStartCoord)) {
+              adj.coords[idx] = snappedCoord
+              changed = true
+            }
+          }
+        })
+        if (changed) {
+          adj.polyline.setLatLngs(adj.coords)
+          if (adj.polyline.clickPolyline) {
+            adj.polyline.clickPolyline.setLatLngs(adj.coords)
+          }
+          // Update label panjang kabel tetangga
+          if (adj.polyline.lengthMarker) {
+            const distM = calculatePolylineLength(adj.coords)
+            const distStr = distM >= 1000 ? `${(distM / 1000).toFixed(2)} km` : `${Math.round(distM)} m`
+            const mid = getPolylineMidpoint(adj.coords)
+            if (mid) {
+              adj.polyline.lengthMarker.setLatLng(mid)
+              adj.polyline.lengthMarker.setIcon(L.divIcon({
+                className: 'cable-length-label',
+                html: `<div>${distStr}</div>`,
+                iconSize: [60, 20],
+                iconAnchor: [30, 10]
+              }))
+            }
+          }
+        }
+      })
       
-      // Update label jarak real-time
+      dragStartCoord = [...snappedCoord]
+      
+      // Update label jarak real-time utama
       const distanceMeters = calculatePolylineLength(coords)
       const distanceStr = distanceMeters >= 1000
         ? `${(distanceMeters / 1000).toFixed(2)} km`
@@ -254,7 +323,23 @@ const renderEditHandles = () => {
 
     midMarker.on('drag', (ev) => {
       const newLatLng = ev.latlng
-      coords[i + 1] = [newLatLng.lat, newLatLng.lng]
+      const newCoord = [newLatLng.lat, newLatLng.lng]
+      
+      // Snapping: jika dekat dengan salah satu vertex kabel tetangga, snap ke sana!
+      let snappedCoord = newCoord
+      let snapFound = false
+      for (const adj of adjacentCables) {
+        for (const pt of adj.coords) {
+          if (isCloseCoord(newCoord, pt)) {
+            snappedCoord = pt
+            snapFound = true
+            break
+          }
+        }
+        if (snapFound) break
+      }
+
+      coords[i + 1] = snappedCoord
       editPolyline.setLatLngs(coords)
       if (editPolyline.clickPolyline) {
         editPolyline.clickPolyline.setLatLngs(coords)
@@ -288,13 +373,28 @@ const saveAndExitEditPath = async () => {
   if (activeEditDevice.value && editPolyline) {
     const finalCoords = editPolyline.getLatLngs().map(ll => [ll.lat, ll.lng])
     try {
+      // 1. Simpan rute kabel utama
       await api.updateDevice(activeEditDevice.value.id, {
         type: activeEditDevice.value.type,
         name: activeEditDevice.value.name,
         cablePath: JSON.stringify(finalCoords)
       })
       activeEditDevice.value.cablePath = JSON.stringify(finalCoords)
-      await loadDevices() // Menggambar ulang rute yang telah disimpan
+
+      // 2. Simpan kabel tetangga (se-induk) yang ikut bergeser secara otomatis
+      for (const adj of adjacentCables) {
+        const hasChanged = JSON.stringify(adj.coords) !== JSON.stringify(adj.originalCoords)
+        if (hasChanged) {
+          await api.updateDevice(adj.device.id, {
+            type: adj.device.type,
+            name: adj.device.name,
+            cablePath: JSON.stringify(adj.coords)
+          })
+          adj.device.cablePath = JSON.stringify(adj.coords)
+        }
+      }
+
+      await loadDevices() // Menggambar ulang seluruh rute yang telah diperbarui
     } catch (err) {
       console.error("Gagal menyimpan rute kabel:", err)
     }
@@ -821,6 +921,8 @@ const loadDevices = async () => {
 
             updateLengthLabel(latlngs)
 
+            polylineMap.value[device.id] = polyline
+
             clickPolyline.on('click', (e) => {
               if (store.mapMode !== 'VIEW') return
               
@@ -833,6 +935,28 @@ const loadDevices = async () => {
               clearEditHandles()
               activeEditDevice.value = device
               editPolyline = polyline
+
+              // Cari seluruh kabel lain yang terhubung ke ODP/Induk yang sama
+              const siblings = allDevicesData.value.filter(d => 
+                d.id !== device.id && 
+                d.parentId === device.parentId && 
+                hasCoords(d)
+              )
+
+              adjacentCables = siblings.map(sib => {
+                const sibPoly = polylineMap.value[sib.id]
+                let sibCoords = []
+                if (sibPoly) {
+                  sibCoords = sibPoly.getLatLngs().map(ll => [ll.lat, ll.lng])
+                }
+                return {
+                  device: sib,
+                  polyline: sibPoly,
+                  coords: sibCoords,
+                  originalCoords: JSON.parse(JSON.stringify(sibCoords))
+                }
+              }).filter(item => item.polyline !== undefined)
+
               renderEditHandles()
             })
 
