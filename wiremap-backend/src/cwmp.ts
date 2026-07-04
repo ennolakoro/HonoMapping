@@ -300,6 +300,52 @@ export function parseGetParameterNamesResponse(xmlString: string): string[] {
   return params;
 }
 
+export function parseAllParameterNamesResponse(xmlString: string): string[] {
+  const names: string[] = [];
+  const regex = /<Name[^>]*>\s*([^<]+?)\s*<\/Name>/g;
+  let match;
+  while ((match = regex.exec(xmlString)) !== null) {
+    const name = match[1].trim();
+    if (name && !names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+export function filterWanParameterNames(names: string[]) {
+  const wantedSuffixes = [
+    'Name',
+    'Alias',
+    'Username',
+    'Password',
+    'NATEnabled',
+    'X_HW_NAT',
+    'Enable',
+    'ConnectionStatus',
+    'Status',
+    'ExternalIPAddress',
+    'LocalIPAddress',
+    'IPAddress',
+    'X_HW_VLAN',
+    'X_ZTE-COM_VLANID',
+    'VLANID',
+    'X_CT_COM_VLAN',
+    'ServiceList',
+    'ConnectionType',
+    'LowerLayers',
+  ];
+  return names.filter(name => {
+    const isWanPath =
+      name.includes('WANPPPConnection.') ||
+      name.includes('WANIPConnection.') ||
+      name.includes('Device.PPP.Interface.') ||
+      name.includes('Device.IP.Interface.') ||
+      name.includes('Device.Ethernet.VLANTermination.') ||
+      name.includes('Device.NAT.');
+    if (!isWanPath) return false;
+    return wantedSuffixes.some(suffix => name.endsWith(`.${suffix}`));
+  });
+}
+
 /**
  * Parse hosts dari GetParameterValuesResponse yang berisi host params spesifik.
  * Menggabungkan tabel Hosts.Host. dan WLANConfiguration.i.AssociatedDevice.i.
@@ -381,18 +427,31 @@ const findRawValue = (raw: Record<string, string>, patterns: RegExp[]) => {
 }
 
 export function normalizeWanConfig(raw: Record<string, string>) {
-  const groups = new Map<string, Record<string, string>>();
+  const groups = new Map<string, { values: Record<string, string>; fieldPaths: Record<string, string> }>();
   for (const [name, value] of Object.entries(raw)) {
-    const match = name.match(/^(.*(?:WANPPPConnection|WANIPConnection|Device\.PPP\.Interface|Device\.IP\.Interface)\.\d+)\.([^.]*)$/);
+    const match = name.match(/^(.*(?:WANPPPConnection|WANIPConnection|Device\.PPP\.Interface|Device\.IP\.Interface|Device\.Ethernet\.VLANTermination|Device\.NAT)\.\d+)\.(.+)$/);
     if (!match) continue;
     const [, base, key] = match;
-    const group = groups.get(base) || {};
-    group[key] = value;
+    const group = groups.get(base) || { values: {}, fieldPaths: {} };
+    group.values[key] = value;
+    group.fieldPaths[key] = name;
     groups.set(base, group);
   }
 
-  const normalized = [...groups.entries()].map(([base, item]) => {
+  const normalized = [...groups.entries()].map(([base, group]) => {
+    const item = group.values;
     const type = base.includes('WANPPPConnection') || base.includes('Device.PPP.Interface') ? 'PPPoE' : 'IPoE';
+    const fieldPaths = {
+      name: group.fieldPaths.Name || group.fieldPaths.Alias || null,
+      username: group.fieldPaths.Username || null,
+      password: group.fieldPaths.Password || null,
+      nat: group.fieldPaths.NATEnabled || group.fieldPaths.X_HW_NAT || null,
+      vlanId: group.fieldPaths.X_HW_VLAN || group.fieldPaths['X_ZTE-COM_VLANID'] || group.fieldPaths.VLANID || group.fieldPaths.X_CT_COM_VLAN || null,
+      status: group.fieldPaths.ConnectionStatus || group.fieldPaths.Status || null,
+      enable: group.fieldPaths.Enable || null,
+      ipAddress: group.fieldPaths.ExternalIPAddress || group.fieldPaths.LocalIPAddress || group.fieldPaths['IPCP.LocalIPAddress'] || group.fieldPaths.IPAddress || group.fieldPaths['IPv4Address.1.IPAddress'] || null,
+      serviceType: group.fieldPaths.ServiceList || group.fieldPaths.ConnectionType || null,
+    };
     return {
       path: base,
       type,
@@ -403,8 +462,9 @@ export function normalizeWanConfig(raw: Record<string, string>) {
       vlanId: item.X_HW_VLAN || item['X_ZTE-COM_VLANID'] || item.VLANID || item.X_CT_COM_VLAN || null,
       status: item.ConnectionStatus || item.Status || null,
       enable: item.Enable || null,
-      ipAddress: item.ExternalIPAddress || item.LocalIPAddress || item.IPAddress || null,
+      ipAddress: item.ExternalIPAddress || item.LocalIPAddress || item['IPCP.LocalIPAddress'] || item.IPAddress || item['IPv4Address.1.IPAddress'] || null,
       serviceType: item.ServiceList || item.ConnectionType || type,
+      fieldPaths,
     };
   });
 

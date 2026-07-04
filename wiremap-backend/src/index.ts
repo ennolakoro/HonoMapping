@@ -126,7 +126,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { buildParameterRequestList, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues } from './cwmp'
+import { buildParameterRequestList, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -297,10 +297,13 @@ interface CwmpSession {
   currentHardwareVersion: string | null;
   currentSoftwareVersion: string | null;
   currentModemProfile: string | null;
+  currentRequestMode: 'inform' | 'discover-wan' | 'config';
   gponFaultRetried: boolean;
   updatedAt: number;
   // Multi-stage host fetching
-  stage: 'params' | 'host_names' | 'host_values' | 'done';
+  stage: 'params' | 'wan_names' | 'host_names' | 'host_values' | 'done';
+  wanNameRoots?: string[];
+  wanDiscoveredParams?: string[];
   pendingModemData?: any; // data dari stage 1 sementara disimpan
 }
 
@@ -358,6 +361,26 @@ const setProgressForKeys = (keys: string[], progress: SyncProgress) => {
   for (const key of keys) {
     syncProgress.set(key, { ...progress })
   }
+}
+
+const getWanDiscoveryRoots = (profile?: string | null) => {
+  const tr181Roots = [
+    'Device.PPP.',
+    'Device.IP.',
+    'Device.Ethernet.VLANTermination.',
+    'Device.NAT.',
+  ]
+  const tr098Roots = ['InternetGatewayDevice.WANDevice.']
+  return profile === 'Device'
+    ? [...tr181Roots, ...tr098Roots]
+    : [...tr098Roots, ...tr181Roots]
+}
+
+const requestNextWanNameRoot = (session: CwmpSession) => {
+  const nextRoot = session.wanNameRoots?.shift()
+  if (!nextRoot) return null
+  session.updatedAt = Date.now()
+  return createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, nextRoot, false)
 }
 
 const markPendingConfigFailed = (clientId: number | null | undefined, error: string) => {
@@ -778,6 +801,8 @@ const cwmpHandler = async (c: any) => {
       console.log(`[CWMP] Profile ${informData.rootDataModel || 'InternetGatewayDevice'} untuk ${informData.manufacturer || informData.SerialNumber || clientName}: ${paramsToReq.length} parameter`)
  
       const progressKeys = getProgressKeysForClient(clientId, [clientIp, currentClientIp])
+      const existingProgress = getFirstProgress(progressKeys)
+      const requestMode = existingProgress?.mode || 'inform'
 
       session = {
         waitingForEmptyPost: true,
@@ -793,14 +818,16 @@ const cwmpHandler = async (c: any) => {
         currentHardwareVersion: informData.hardwareVersion || null,
         currentSoftwareVersion: informData.softwareVersion || null,
         currentModemProfile: informData.rootDataModel || null,
+        currentRequestMode: requestMode,
         gponFaultRetried: false,
         updatedAt: Date.now(),
         stage: 'params',
+        wanNameRoots: [],
+        wanDiscoveredParams: [],
         pendingModemData: undefined,
       }
       cwmpSessions.set(sessionKey, session)
 
-      const existingProgress = getFirstProgress(progressKeys)
       setProgressForKeys(progressKeys, {
         id: clientId,
         username: existingProgress?.username || clientName,
@@ -867,6 +894,24 @@ const cwmpHandler = async (c: any) => {
         })
       }
 
+      if (session.currentRequestMode === 'discover-wan') {
+        session.stage = 'wan_names'
+        session.wanNameRoots = getWanDiscoveryRoots(session.currentModemProfile)
+        session.wanDiscoveredParams = []
+        const responseXml = requestNextWanNameRoot(session)
+        cwmpSessions.set(sessionKey, session)
+        if (responseXml) {
+          console.log(`[CWMP] Discovery WAN names dimulai untuk ${session.currentModemSN}: ${session.currentModemProfile || 'InternetGatewayDevice'}`)
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+      }
+
       const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
       return new Response(responseXml, {
         headers: {
@@ -910,13 +955,28 @@ const cwmpHandler = async (c: any) => {
           // (misalnya saat WiFi restart), sehingga GetParameterValues berikutnya tidak terbalaskan.
           try {
             const directUpdate: Record<string, any> = {}
+            const currentRows = await db.select().from(clients).where(eq(clients.id, session.currentTriggeredClientId)).limit(1)
+            const currentWanConfig = safeParseJson((currentRows[0] as any)?.wanConfigJson, [])
+            let wanConfigChanged = false
             for (const p of pc.params) {
               if (p.name.includes('WLANConfiguration.1.SSID')) directUpdate.wifiSsid = p.value
               else if (p.name.includes('WLANConfiguration.5.SSID')) directUpdate.wifiSsid5g = p.value
               else if (p.name.includes('WLANConfiguration.1.KeyPassphrase') || p.name.includes('WLANConfiguration.1.PreSharedKey')) directUpdate.wifiPassword = p.value
               else if (p.name.includes('WLANConfiguration.5.KeyPassphrase') || p.name.includes('WLANConfiguration.5.PreSharedKey')) directUpdate.wifiPassword5g = p.value
-              else if (p.name.includes('WANPPPConnection.1.Username')) directUpdate.pppoeUsername = p.value
+              else if (p.name.includes('WANPPPConnection') && p.name.endsWith('.Username')) directUpdate.pppoeUsername = p.value
+              else if (p.name.includes('Device.PPP.Interface') && p.name.endsWith('.Username')) directUpdate.pppoeUsername = p.value
+
+              for (const row of currentWanConfig) {
+                const fieldPaths = row.fieldPaths || {}
+                for (const [key, path] of Object.entries(fieldPaths)) {
+                  if (path === p.name) {
+                    row[key] = p.value
+                    wanConfigChanged = true
+                  }
+                }
+              }
             }
+            if (wanConfigChanged) directUpdate.wanConfigJson = JSON.stringify(currentWanConfig)
 
             if (Object.keys(directUpdate).length > 0) {
               await db.update(clients)
@@ -939,7 +999,13 @@ const cwmpHandler = async (c: any) => {
         }
       }
 
-      const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
+      const pendingConfig = session.currentTriggeredClientId ? pendingConfigs.get(session.currentTriggeredClientId) : null
+      const verifyParams = pendingConfig?.params?.map(param => param.name).filter(Boolean) || []
+      const responseXml = createGetParameterValues(
+        session.currentCwmpId,
+        session.currentCwmpNamespace,
+        verifyParams.length ? verifyParams : session.currentParamsToRequest
+      );
       return new Response(responseXml, {
         headers: {
           'Content-Type': 'text/xml',
@@ -994,6 +1060,45 @@ const cwmpHandler = async (c: any) => {
     }
     
     if (bodyText.includes('GetParameterNamesResponse')) {
+      if (session.stage === 'wan_names') {
+        const names = parseAllParameterNamesResponse(bodyText)
+        const wanParams = filterWanParameterNames(names)
+        session.wanDiscoveredParams = [...new Set([...(session.wanDiscoveredParams || []), ...wanParams])]
+        console.log(`[CWMP] Discovery WAN names ${session.currentModemSN}: +${wanParams.length}, total=${session.wanDiscoveredParams.length}`)
+
+        const nextXml = requestNextWanNameRoot(session)
+        if (nextXml) {
+          cwmpSessions.set(sessionKey, session)
+          return new Response(nextXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
+        session.stage = 'params'
+        session.updatedAt = Date.now()
+        cwmpSessions.set(sessionKey, session)
+
+        if (session.wanDiscoveredParams.length > 0) {
+          const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.wanDiscoveredParams);
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
+        const params = { rawParams: {}, wanConfig: [], connectedHosts: [] }
+        await saveModemDataToDb(c, db, session, params, clientIp)
+        cwmpSessions.delete(sessionKey)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+      }
+
       if (session.stage === 'host_names') {
         const hostParams = parseGetParameterNamesResponse(bodyText)
         
@@ -1035,6 +1140,40 @@ const cwmpHandler = async (c: any) => {
 
     if (bodyText.includes('Fault') || bodyText.includes('fault')) {
       const faultCode = (bodyText.match(/<FaultCode>(\d+)<\/FaultCode>/) || [])[1] || '?';
+
+      if (faultCode === '9005' && session.stage === 'wan_names') {
+        console.warn(`[CWMP] Root WAN tidak didukung oleh ${session.currentModemSN}, mencoba root berikutnya.`)
+        const nextXml = requestNextWanNameRoot(session)
+        if (nextXml) {
+          cwmpSessions.set(sessionKey, session)
+          return new Response(nextXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
+        session.stage = 'params'
+        session.updatedAt = Date.now()
+        cwmpSessions.set(sessionKey, session)
+        if ((session.wanDiscoveredParams || []).length > 0) {
+          const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.wanDiscoveredParams || []);
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
+        const params = { rawParams: {}, wanConfig: [], connectedHosts: [] }
+        await saveModemDataToDb(c, db, session, params, clientIp)
+        cwmpSessions.delete(sessionKey)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+      }
       
       if (faultCode === '9005' && (session.stage === 'host_names' || session.stage === 'host_values')) {
         const params = session.pendingModemData || {}

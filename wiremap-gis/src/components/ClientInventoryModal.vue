@@ -19,7 +19,9 @@ const actionProgress = ref(0)
 const isDiscovering = ref(false)
 const isInforming = ref(false)
 const isPushingConfig = ref(false)
+const isSavingWan = ref(false)
 const isSavingAdmin = ref(false)
+const wanDraftRows = ref([])
 
 const cpeForm = ref({
   pppoeUsername: '',
@@ -93,6 +95,20 @@ const syncFormsFromClient = () => {
     username: client?.adminUsername || '',
     password: client?.adminPassword || ''
   }
+  wanDraftRows.value = selectedWanRows.value.map((wan) => ({
+    path: wan.path,
+    fieldPaths: wan.fieldPaths || {},
+    type: wan.type || '',
+    name: wan.name || '',
+    vlanId: wan.vlanId || '',
+    username: wan.username || '',
+    password: wan.password || '',
+    nat: wan.nat || '',
+    enable: wan.enable || '',
+    status: wan.status || '',
+    serviceType: wan.serviceType || '',
+    ipAddress: wan.ipAddress || ''
+  }))
 }
 
 const loadClients = async () => {
@@ -286,6 +302,61 @@ const pushCpeConfig = async () => {
   }
 }
 
+const addWanChangedParam = (params, row, current, key, type = 'string') => {
+  const path = row.fieldPaths?.[key]
+  if (!path) return
+  const next = normalize(row[key])
+  const prev = normalize(current?.[key])
+  if (next === prev) return
+  if (!next && key === 'password') return
+  params.push({ name: path, value: next, type })
+}
+
+const saveWanConfig = async () => {
+  const client = selectedClient.value
+  if (!client?.triggerIp) {
+    actionMessage.value = 'Gagal: IP management modem belum tersedia'
+    actionState.value = 'failed'
+    actionProgress.value = 100
+    return
+  }
+
+  const params = []
+  wanDraftRows.value.forEach((row, index) => {
+    const current = selectedWanRows.value[index] || {}
+    addWanChangedParam(params, row, current, 'name')
+    addWanChangedParam(params, row, current, 'vlanId')
+    addWanChangedParam(params, row, current, 'username')
+    addWanChangedParam(params, row, current, 'password')
+    addWanChangedParam(params, row, current, 'nat')
+    addWanChangedParam(params, row, current, 'enable')
+    addWanChangedParam(params, row, current, 'serviceType')
+  })
+
+  if (!params.length) {
+    actionMessage.value = 'Tidak ada perubahan WAN untuk disimpan'
+    actionState.value = 'idle'
+    actionProgress.value = 0
+    return
+  }
+
+  isSavingWan.value = true
+  actionMessage.value = 'Menyimpan WAN config ke modem...'
+  actionProgress.value = 10
+  actionState.value = 'triggered'
+  try {
+    await api.pushModemConfig(client.triggerIp, { deviceId: client.pseudoId, params })
+    await waitForClientSync(client, 'Menunggu modem menyimpan WAN config...')
+    actionMessage.value = 'WAN config berhasil disimpan'
+  } catch (err) {
+    actionMessage.value = 'Gagal simpan WAN config: ' + err.message
+    actionProgress.value = 100
+    actionState.value = 'failed'
+  } finally {
+    isSavingWan.value = false
+  }
+}
+
 const saveAdminConfig = async () => {
   if (!selectedClient.value) return
   isSavingAdmin.value = true
@@ -427,10 +498,16 @@ watch(() => props.isOpen, (isOpen) => {
             <section class="detail-section">
               <div class="section-split">
                 <h4>WAN Config</h4>
-                <button type="button" @click="discoverWan" :disabled="isDiscovering">
-                  <span class="material-symbols-outlined" :class="{ spin: isDiscovering }">download</span>
-                  Ambil Data
-                </button>
+                <div class="section-actions">
+                  <button type="button" @click="discoverWan" :disabled="isDiscovering">
+                    <span class="material-symbols-outlined" :class="{ spin: isDiscovering }">download</span>
+                    Ambil Data
+                  </button>
+                  <button type="button" @click="saveWanConfig" :disabled="isSavingWan || !wanDraftRows.length">
+                    <span class="material-symbols-outlined" :class="{ spin: isSavingWan }">save</span>
+                    Save WAN
+                  </button>
+                </div>
               </div>
               <div v-if="!selectedWanRows.length" class="empty-wan">WAN PPP belum ditemukan.</div>
               <table v-else class="mini-table">
@@ -447,14 +524,14 @@ watch(() => props.isOpen, (isOpen) => {
                   </tr>
                 </thead>
                 <tbody>
-                  <tr v-for="(wan, index) in selectedWanRows" :key="wan.path || index">
+                  <tr v-for="(wan, index) in wanDraftRows" :key="wan.path || index">
                     <td>{{ display(wan.type, '-') }}</td>
-                    <td>{{ display(wan.name, '-') }}</td>
-                    <td>{{ display(wan.vlanId, '-') }}</td>
-                    <td class="mono">{{ display(wan.username, '-') }}</td>
-                    <td class="mono">{{ masked(wan.password) }}</td>
-                    <td>{{ display(wan.nat, '-') }}</td>
-                    <td>{{ display(wan.status || wan.enable, '-') }}</td>
+                    <td><input v-model="wan.name" :disabled="!wan.fieldPaths?.name" /></td>
+                    <td><input v-model="wan.vlanId" :disabled="!wan.fieldPaths?.vlanId" /></td>
+                    <td><input v-model="wan.username" class="mono" :disabled="!wan.fieldPaths?.username" /></td>
+                    <td><input v-model="wan.password" class="mono" type="password" :placeholder="wan.password ? 'Tersimpan' : '-'" :disabled="!wan.fieldPaths?.password" /></td>
+                    <td><input v-model="wan.nat" :disabled="!wan.fieldPaths?.nat" /></td>
+                    <td><input v-model="wan.enable" :placeholder="wan.status || '-'" :disabled="!wan.fieldPaths?.enable" /></td>
                     <td class="mono">{{ display(wan.ipAddress, '-') }}</td>
                   </tr>
                 </tbody>
@@ -587,6 +664,7 @@ watch(() => props.isOpen, (isOpen) => {
 .client-close,
 .client-inventory-toolbar button,
 .section-split button,
+.section-actions button,
 .detail-head-actions button,
 .view-btn,
 .cpe-form button,
@@ -633,6 +711,7 @@ watch(() => props.isOpen, (isOpen) => {
 
 .client-inventory-toolbar button,
 .section-split button,
+.section-actions button,
 .detail-head-actions button,
 .cpe-form button,
 .admin-form button {
@@ -643,6 +722,14 @@ watch(() => props.isOpen, (isOpen) => {
   background: #0ea5e9;
   color: white;
   font-size: 11px;
+}
+
+.section-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .detail-head-actions {
@@ -785,6 +872,24 @@ watch(() => props.isOpen, (isOpen) => {
 .mini-table th {
   color: #93c5fd;
   font-size: 9px;
+}
+
+.mini-table input {
+  width: 100%;
+  min-width: 74px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  font-size: 10px;
+  outline: 0;
+  padding: 5px 6px;
+}
+
+.mini-table input:disabled {
+  color: #64748b;
+  background: rgba(15, 23, 42, 0.32);
+  cursor: not-allowed;
 }
 
 .empty-wan,
