@@ -909,7 +909,39 @@ const cwmpHandler = async (c: any) => {
         if (pc && pc.status === 'sending') {
           pc.status = 'success'
           pendingConfigs.set(session.currentTriggeredClientId, pc)
-          console.log(`[CONFIG] SetParameterValuesResponse diterima & dikonfirmasi untuk clientId=${session.currentTriggeredClientId}. Stage direset ke 'params'. Membaca konfigurasi terbaru dari modem...`)
+          console.log(`[CONFIG] SetParameterValuesResponse diterima & dikonfirmasi untuk clientId=${session.currentTriggeredClientId}. Menyimpan config ke DB langsung...`)
+
+          // === SIMPAN LANGSUNG KE DB DARI params yang dikirim ===
+          // Ini penting karena modem mungkin menutup koneksi TCP setelah menerapkan config
+          // (misalnya saat WiFi restart), sehingga GetParameterValues berikutnya tidak terbalaskan.
+          try {
+            const directUpdate: Record<string, any> = {}
+            for (const p of pc.params) {
+              if (p.name.includes('WLANConfiguration.1.SSID')) directUpdate.wifiSsid = p.value
+              else if (p.name.includes('WLANConfiguration.5.SSID')) directUpdate.wifiSsid5g = p.value
+              else if (p.name.includes('WLANConfiguration.1.KeyPassphrase') || p.name.includes('WLANConfiguration.1.PreSharedKey')) directUpdate.wifiPassword = p.value
+              else if (p.name.includes('WLANConfiguration.5.KeyPassphrase') || p.name.includes('WLANConfiguration.5.PreSharedKey')) directUpdate.wifiPassword5g = p.value
+              else if (p.name.includes('WANPPPConnection.1.Username')) directUpdate.pppoeUsername = p.value
+            }
+
+            if (Object.keys(directUpdate).length > 0) {
+              await db.update(clients)
+                .set(directUpdate)
+                .where(eq(clients.id, session.currentTriggeredClientId))
+              console.log(`[CONFIG] Konfigurasi berhasil disimpan langsung ke DB untuk clientId=${session.currentTriggeredClientId}:`, directUpdate)
+
+              // Update progress ke success agar frontend refresh data
+              setProgressForKeys(progressKeys, {
+                id: prog?.id ?? null,
+                username: prog?.username ?? '',
+                progress: 100,
+                status: 'success',
+                updatedAt: Date.now()
+              })
+            }
+          } catch (dbErr: any) {
+            console.error(`[CONFIG] Gagal simpan langsung ke DB:`, dbErr.message)
+          }
         }
       }
 
