@@ -3,6 +3,9 @@ const API_URL = (window.__BACKEND_URL__ || 'http://127.0.0.1:8787') + '/api';
 // State sederhana untuk menyimpan token secara lokal
 let authToken = localStorage.getItem('wiremap_token') || null;
 
+const CLIENT_ENDPOINT_MISSING =
+  'Endpoint Daftar Client belum tersedia di backend yang sedang berjalan. Restart/deploy backend terbaru lalu coba lagi.';
+
 export const api = {
   setToken(token) {
     authToken = token;
@@ -169,6 +172,7 @@ export const api = {
         'Authorization': `Bearer ${authToken}`
       }
     });
+    if (res.status === 404) throw new Error(CLIENT_ENDPOINT_MISSING);
     if (!res.ok) throw new Error('Gagal mengambil daftar client');
     return res.json();
   },
@@ -180,6 +184,7 @@ export const api = {
       }
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 404) throw new Error(CLIENT_ENDPOINT_MISSING);
     if (!res.ok) throw new Error(data.details || data.error || 'Gagal mengambil detail client');
     return data;
   },
@@ -192,6 +197,7 @@ export const api = {
       }
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 404) throw new Error(CLIENT_ENDPOINT_MISSING);
     if (!res.ok) throw new Error(data.details || data.error || 'Gagal trigger inform client');
     return data;
   },
@@ -204,6 +210,7 @@ export const api = {
       }
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 404) throw new Error(CLIENT_ENDPOINT_MISSING);
     if (!res.ok) throw new Error(data.details || data.error || 'Gagal discovery WAN');
     return data;
   },
@@ -218,6 +225,7 @@ export const api = {
       body: JSON.stringify(payload)
     });
     const data = await res.json().catch(() => ({}));
+    if (res.status === 404) throw new Error(CLIENT_ENDPOINT_MISSING);
     if (!res.ok) throw new Error(data.details || data.error || 'Gagal menyimpan admin config');
     return data;
   },
