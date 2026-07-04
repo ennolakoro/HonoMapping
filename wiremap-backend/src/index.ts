@@ -852,7 +852,7 @@ const cwmpHandler = async (c: any) => {
         }
         
         console.log(`[CWMP Stage 1] Mengirim GetParameterNames ke [${clientIp}] untuk mendeteksi host terhubung...`)
-        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.Hosts.', false);
+        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.Hosts.Host.', true);
         return new Response(responseXml, {
           headers: {
             'Content-Type': 'text/xml',

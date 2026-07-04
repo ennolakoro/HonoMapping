@@ -63,16 +63,22 @@ export function createGetParameterNames(
  * Mengembalikan array nama parameter leaf yang relevan untuk host list.
  */
 export function parseGetParameterNamesResponse(xmlString: string): string[] {
-  const params: string[] = [];
-  const regex = /<Name[^>]*>\s*(InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.\d+\.[^<\s]+)\s*<\/Name>/g;
+  const hostIndexes = new Set<string>();
+  const regex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.?\s*<\/Name>/g;
   let match;
   while ((match = regex.exec(xmlString)) !== null) {
-    params.push(match[1].trim());
+    hostIndexes.add(match[1]);
   }
-  // Filter hanya IPAddress, MACAddress, HostName, Active
-  const relevant = params.filter(p => /\.(IPAddress|MACAddress|HostName|Active)$/.test(p));
-  console.log('[DEBUG CWMP] GetParameterNames - host params found:', relevant.length, relevant.slice(0, 8));
-  return relevant;
+  
+  const params: string[] = [];
+  for (const idx of hostIndexes) {
+    params.push(`InternetGatewayDevice.LANDevice.1.Hosts.Host.${idx}.IPAddress`);
+    params.push(`InternetGatewayDevice.LANDevice.1.Hosts.Host.${idx}.MACAddress`);
+    params.push(`InternetGatewayDevice.LANDevice.1.Hosts.Host.${idx}.HostName`);
+    params.push(`InternetGatewayDevice.LANDevice.1.Hosts.Host.${idx}.Active`);
+  }
+  console.log('[DEBUG CWMP] GetParameterNames - host indexes found:', Array.from(hostIndexes), 'yielding', params.length, 'params');
+  return params;
 }
 
 /**
