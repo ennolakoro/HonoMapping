@@ -159,12 +159,28 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     rxPower: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower') ||
              getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower') ||
-             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower'),
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower'),
     txPower: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower') ||
-             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower'),
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.TxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.TxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower'),
     temperature: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature') ||
-                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature'),
+                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature') ||
+                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.Temperature') ||
+                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.Temperature') ||
+                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature') ||
+                 getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature'),
     voltage: getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage') ||
-             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage')
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.SupplyVoltage') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.SupplyVoltage') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage') ||
+             getParameterValue(xmlString, 'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage')
   };
 }

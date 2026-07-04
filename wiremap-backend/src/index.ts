@@ -321,12 +321,26 @@ const stripUndefined = (record: Record<string, any>) =>
 const inferModemInfoFromSn = (sn?: string | null) => {
   const normalized = (sn || '').toUpperCase()
   if (!normalized) return {}
+  
   if (normalized.startsWith('485754') || normalized.startsWith('HWTC')) {
-    return {
-      brand: 'Huawei Technologies Co., Ltd',
-      modelName: 'EG8145V5'
-    }
+    return { brand: 'Huawei', modelName: 'EG8145V5' }
   }
+  if (normalized.startsWith('5A5445') || normalized.startsWith('ZTEG')) {
+    return { brand: 'ZTE', modelName: 'ZTE GPON ONT' }
+  }
+  if (normalized.startsWith('464854') || normalized.startsWith('FHTT')) {
+    return { brand: 'Fiberhome', modelName: 'Fiberhome GPON ONT' }
+  }
+  if (normalized.startsWith('414C43') || normalized.startsWith('ALCL')) {
+    return { brand: 'Nokia/Alcatel', modelName: 'Nokia GPON ONT' }
+  }
+  if (normalized.startsWith('56534F') || normalized.startsWith('VSOL')) {
+    return { brand: 'VSOL', modelName: 'VSOL GPON ONT' }
+  }
+  if (normalized.startsWith('54504C') || normalized.startsWith('TPLG')) {
+    return { brand: 'TP-Link', modelName: 'TP-Link GPON ONT' }
+  }
+  
   return {}
 }
 
@@ -538,23 +552,38 @@ const cwmpHandler = async (c: any) => {
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.TxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.Temperature',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.SupplyVoltage',
         ]
       } else if (isVsol) {
         console.log(`[ACS Brand] Deteksi VSOL/XPON ONT untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
           'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature',
+          'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage',
+          // Fallback if X_GponInterface is used
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage',
         ]
       } else {
         // Fallback: Parameter generic / brand lain
         console.log(`[ACS Brand] Deteksi Brand Generic/Lainnya (${informData.manufacturer}) untuk SN: ${informData.SerialNumber}`)
         paramsToReq = [
           ...baseWlanParams,
-          // Coba request standard GPON TR-098 path optik
+          // Coba request standard GPON TR-098 path optik untuk generic (kemungkinan terbaca jika modenya standard)
           'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature',
+          'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage',
+          // Coba fallback brand-brand umum
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
+          'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower',
         ]
       }
  
