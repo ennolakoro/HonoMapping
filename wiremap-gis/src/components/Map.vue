@@ -184,6 +184,9 @@ const renderEditHandles = () => {
       const newLatLng = ev.latlng
       coords[i] = [newLatLng.lat, newLatLng.lng]
       editPolyline.setLatLngs(coords)
+      if (editPolyline.clickPolyline) {
+        editPolyline.clickPolyline.setLatLngs(coords)
+      }
       
       // Update label jarak real-time
       const distanceMeters = calculatePolylineLength(coords)
@@ -211,6 +214,9 @@ const renderEditHandles = () => {
       if (coords.length > 2) {
         coords.splice(i, 1)
         editPolyline.setLatLngs(coords)
+        if (editPolyline.clickPolyline) {
+          editPolyline.clickPolyline.setLatLngs(coords)
+        }
         renderEditHandles()
       }
     })
@@ -241,12 +247,18 @@ const renderEditHandles = () => {
       const startLatLng = ev.target.getLatLng()
       coords.splice(i + 1, 0, [startLatLng.lat, startLatLng.lng])
       editPolyline.setLatLngs(coords)
+      if (editPolyline.clickPolyline) {
+        editPolyline.clickPolyline.setLatLngs(coords)
+      }
     })
 
     midMarker.on('drag', (ev) => {
       const newLatLng = ev.latlng
       coords[i + 1] = [newLatLng.lat, newLatLng.lng]
       editPolyline.setLatLngs(coords)
+      if (editPolyline.clickPolyline) {
+        editPolyline.clickPolyline.setLatLngs(coords)
+      }
       
       const distanceMeters = calculatePolylineLength(coords)
       const distanceStr = distanceMeters >= 1000
@@ -287,6 +299,84 @@ const saveAndExitEditPath = async () => {
     }
   }
   clearEditHandles()
+}
+
+let lightLayer = null
+let darkLayer = null
+let satelliteLayer = null
+const activeMapLayer = ref('light')
+
+const setMapLayer = (mode) => {
+  activeMapLayer.value = mode
+  if (!map) return
+  
+  if (map.hasLayer(lightLayer)) map.removeLayer(lightLayer)
+  if (map.hasLayer(darkLayer)) map.removeLayer(darkLayer)
+  if (map.hasLayer(satelliteLayer)) map.removeLayer(satelliteLayer)
+  
+  if (mode === 'light') {
+    lightLayer.addTo(map)
+  } else if (mode === 'dark') {
+    darkLayer.addTo(map)
+  } else if (mode === 'satellite') {
+    satelliteLayer.addTo(map)
+  }
+}
+
+let autoRefreshInterval = null
+const previousOnlineStatuses = {}
+
+const playOutageAlarm = () => {
+  try {
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)()
+    
+    // Suara Chime Peringatan (Dua Nada Berurutan)
+    const osc1 = audioCtx.createOscillator()
+    const gain1 = audioCtx.createGain()
+    osc1.connect(gain1)
+    gain1.connect(audioCtx.destination)
+    osc1.type = 'sine'
+    osc1.frequency.setValueAtTime(880, audioCtx.currentTime) // Nada A5
+    gain1.gain.setValueAtTime(0.12, audioCtx.currentTime)
+    gain1.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.3)
+    
+    const osc2 = audioCtx.createOscillator()
+    const gain2 = audioCtx.createGain()
+    osc2.connect(gain2)
+    gain2.connect(audioCtx.destination)
+    osc2.type = 'sine'
+    osc2.frequency.setValueAtTime(587.33, audioCtx.currentTime + 0.12) // Nada D5
+    gain2.gain.setValueAtTime(0.12, audioCtx.currentTime + 0.12)
+    gain2.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.42)
+    
+    osc1.start()
+    osc1.stop(audioCtx.currentTime + 0.3)
+    osc2.start(audioCtx.currentTime + 0.12)
+    osc2.stop(audioCtx.currentTime + 0.42)
+  } catch (err) {
+    console.warn('Audio alarm blocked by browser autoplay policy:', err)
+  }
+}
+
+const startAutoRefresh = () => {
+  if (autoRefreshInterval) return
+  // Selalu jalankan pembaruan data status secara konstan setiap 8 detik
+  autoRefreshInterval = setInterval(async () => {
+    if (!activeEditDevice.value) {
+      try {
+        await loadDevices()
+      } catch (err) {
+        console.error("Auto-refresh real-time status failed:", err)
+      }
+    }
+  }, 8000)
+}
+
+const stopAutoRefresh = () => {
+  if (autoRefreshInterval) {
+    clearInterval(autoRefreshInterval)
+    autoRefreshInterval = null
+  }
 }
 
 const hasCoords = (device) => {
@@ -568,6 +658,22 @@ const deleteDevice = async (device) => {
 const loadDevices = async () => {
   try {
     const devices = await api.getDevices()
+    
+    // Deteksi transisi status online -> offline untuk memicu alarm suara
+    const isFirstLoad = Object.keys(previousOnlineStatuses).length === 0
+    devices.forEach(device => {
+      if (device.type === 'CLIENT') {
+        const currentOnline = device.isOnline
+        const prevOnline = previousOnlineStatuses[device.id]
+        
+        if (!isFirstLoad && prevOnline === true && currentOnline === false) {
+          playOutageAlarm()
+          console.log(`[ALARM] Client went offline: ${device.name}`)
+        }
+        previousOnlineStatuses[device.id] = currentOnline
+      }
+    })
+
     allDevicesData.value = devices
     if (selectedClient.value) {
       const refreshedClient = devices.find(d => d.id === selectedClient.value.id)
@@ -672,6 +778,15 @@ const loadDevices = async () => {
               className: 'animated-cable'
             })
 
+            // Thick invisible polyline for hit tolerance (easier clicks)
+            const clickPolyline = L.polyline(latlngs, {
+              color: 'transparent',
+              weight: 16,
+              opacity: 0,
+              interactive: true
+            })
+            polyline.clickPolyline = clickPolyline
+
             let lengthMarker = null
             const updateLengthLabel = (coords) => {
               const distanceMeters = calculatePolylineLength(coords)
@@ -705,7 +820,7 @@ const loadDevices = async () => {
 
             updateLengthLabel(latlngs)
 
-            polyline.on('click', (e) => {
+            clickPolyline.on('click', (e) => {
               if (store.mapMode !== 'VIEW') return
               if (e.originalEvent) {
                 e.originalEvent.stopPropagation()
@@ -718,6 +833,7 @@ const loadDevices = async () => {
             })
 
             polyline.addTo(polylineLayer)
+            clickPolyline.addTo(polylineLayer)
           }
         }
       }
@@ -908,16 +1024,34 @@ const triggerClear = async () => {
 onMounted(() => {
   // Initialize map
   map = L.map(mapContainer.value, {
-    zoomControl: false
+    zoomControl: false,
+    maxZoom: 22
   }).setView([-7.250445, 112.768845], 13) 
 
   L.control.zoom({ position: 'topright' }).addTo(map)
 
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
+  lightLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', {
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
     subdomains: 'abcd',
-    maxZoom: 20
-  }).addTo(map)
+    maxZoom: 22,
+    maxNativeZoom: 20
+  })
+
+  darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; OpenStreetMap contributors &copy; CARTO',
+    subdomains: 'abcd',
+    maxZoom: 22,
+    maxNativeZoom: 20
+  })
+
+  satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+    maxZoom: 22,
+    maxNativeZoom: 19
+  })
+
+  // Set default map layer
+  lightLayer.addTo(map)
 
   // Watcher untuk transisi mode tambah kabel
   watch(() => store.mapMode, (newMode) => {
@@ -1007,9 +1141,11 @@ onMounted(() => {
   window.addEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
   
   loadDevices()
+  startAutoRefresh()
 })
 
 onUnmounted(() => {
+  stopAutoRefresh()
   window.removeEventListener('refresh-map', loadDevices)
   window.removeEventListener('tambah-kabel', handleTambahKabelEvent)
   window.removeEventListener('lihat-detail', handleLihatDetailEvent)
@@ -1029,6 +1165,37 @@ watch(unmappedClients, (clients) => {
     'is-placing-device': store.mapMode === 'ADD_DEVICE' || store.mapMode === 'PLOT_CLIENT'
   }">
     <div ref="mapContainer" class="absolute inset-0 z-0"></div>
+
+    <!-- Map Layer Switcher (Top Right) -->
+    <div class="absolute top-4 right-14 z-10 flex bg-white/95 border border-slate-200/80 p-0.5 rounded-lg shadow-md backdrop-blur-sm pointer-events-auto">
+      <button 
+        type="button"
+        @click="setMapLayer('light')" 
+        class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
+        :class="activeMapLayer === 'light' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+      >
+        <span class="material-symbols-outlined text-[14px]">light_mode</span>
+        Light
+      </button>
+      <button 
+        type="button"
+        @click="setMapLayer('dark')" 
+        class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
+        :class="activeMapLayer === 'dark' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+      >
+        <span class="material-symbols-outlined text-[14px]">dark_mode</span>
+        Dark
+      </button>
+      <button 
+        type="button"
+        @click="setMapLayer('satellite')" 
+        class="px-2.5 py-1.5 rounded-md text-[10px] font-bold uppercase transition-all border-0 cursor-pointer flex items-center gap-1"
+        :class="activeMapLayer === 'satellite' ? 'bg-primary text-white' : 'bg-transparent text-slate-700 hover:bg-slate-100'"
+      >
+        <span class="material-symbols-outlined text-[14px]">satellite</span>
+        Satelit
+      </button>
+    </div>
 
     <button
       v-if="store.mapMode === 'VIEW'"
