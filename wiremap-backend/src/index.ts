@@ -276,6 +276,9 @@ interface CwmpSession {
 
 const cwmpSessions = new Map<string, CwmpSession>();
 
+// Map: modem localIP -> connectionRequestUrl (disimpan dari data Inform)
+const modemConnectionUrls = new Map<string, string>();
+
 interface PendingConfig {
   clientId: number;
   modemIp: string;
@@ -447,6 +450,12 @@ const cwmpHandler = async (c: any) => {
           existing = existingByLanIp
           console.log(`[MiniACS] SN ${informData.SerialNumber} diprioritaskan ke client ${existing[0].name} berdasarkan lanIp ${currentClientIp}`)
         }
+      }
+
+      // Simpan connectionRequestUrl ke memory Map agar trigger bisa digunakan langsung
+      if (informData.connectionRequestUrl && currentClientIp) {
+        modemConnectionUrls.set(currentClientIp, informData.connectionRequestUrl)
+        console.log(`[ACS] Saved CR URL for ${currentClientIp}: ${informData.connectionRequestUrl}`)
       }
 
       const updatePayload: Record<string, any> = {
@@ -963,15 +972,19 @@ app.post('/api/protected/modem/:ip/sync', async (c) => {
     const clientId = pseudoDeviceId && pseudoDeviceId >= 1000000 ? pseudoDeviceId - 1000000 : null
 
     let clientName = `ONT-${modemIp}`
-    let connectionRequestUrl: string | null = null
+    // Cari connectionRequestUrl: prioritas dari memory Map (dari Inform terbaru), fallback ke DB
+    let connectionRequestUrl: string | null = modemConnectionUrls.get(modemIp) || null
     if (clientId) {
       const client = await db.select().from(clients).where(eq(clients.id, clientId)).limit(1)
       if (client[0]) {
         clientName = client[0].name
-        connectionRequestUrl = client[0].connectionRequestUrl || null
+        // Gunakan DB hanya jika memory tidak ada
+        if (!connectionRequestUrl) {
+          connectionRequestUrl = (client[0] as any).connectionRequestUrl || null
+        }
       }
     }
-    console.log(`[SYNC] Target client=${clientName} id=${clientId || 'N/A'} ip=${modemIp} crUrl=${connectionRequestUrl || 'N/A'}`)
+    console.log(`[SYNC] Target client=${clientName} id=${clientId || 'N/A'} ip=${modemIp} crUrl=${connectionRequestUrl || 'NOT_FOUND_YET'}`)
 
     // Set progress awal (10%)
     syncProgress.set(modemIp, {
