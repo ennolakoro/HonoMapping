@@ -543,6 +543,10 @@ const cwmpHandler = async (c: any) => {
       session = cwmpSessions.get(sessionKey)
     }
 
+    let clientId: number | null = null
+    let clientName = informData.SerialNumber ? `ONT-${informData.SerialNumber}` : `ONT-${clientIp}`
+    let currentClientIp: string | null = null
+
     if (informData.SerialNumber) {
       // Cari apakah client dengan serial number ini sudah terdaftar
       let existing = await db.select()
@@ -550,9 +554,6 @@ const cwmpHandler = async (c: any) => {
         .where(eq(clients.snModem, informData.SerialNumber))
         .limit(1)
       
-      let clientId: number | null = null
-      let clientName = `ONT-${informData.SerialNumber}`
-
       const connectionRequestIp = (() => {
         const url = informData.connectionRequestUrl
         if (!url) return null
@@ -567,7 +568,7 @@ const cwmpHandler = async (c: any) => {
       })()
 
       // Tentukan IP modem yang valid. Jangan gunakan IP Publik jika ada alternatif IP lokal
-      const currentClientIp = informData.ipAddress && !isPublicIp(informData.ipAddress)
+      currentClientIp = informData.ipAddress && !isPublicIp(informData.ipAddress)
         ? informData.ipAddress
         : connectionRequestIp || (isPublicIp(clientIp) ? null : clientIp)
 
@@ -638,11 +639,6 @@ const cwmpHandler = async (c: any) => {
         
         clientId = inserted[0].id
         console.log(`[MiniACS] Auto-created client record for unknown Serial Number: ${informData.SerialNumber}`)
-      }
-      
-        currentClientIp = existing[0].lanIp
-      } else {
-        clientName = `ONT-${informData.SerialNumber}`
       }
     }
 
