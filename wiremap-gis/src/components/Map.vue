@@ -1098,40 +1098,71 @@ watch(unmappedClients, (clients) => {
       </div>
     </section>
     
-    <!-- Floating Map Controls -->
-    <div class="absolute left-4 bottom-4 md:left-6 md:bottom-6 z-10 w-[calc(100%-2rem)] max-w-[360px]">
-       <div class="bg-surface-container-lowest/95 border border-outline-variant rounded-lg shadow-md backdrop-blur px-4 py-3">
-          <div class="flex items-center justify-between gap-3 mb-3">
+    <!-- Floating Map Controls & Legend -->
+    <div class="absolute left-4 bottom-4 md:left-6 md:bottom-6 z-10 w-[calc(100%-2rem)] max-w-[390px] pointer-events-auto">
+       <div class="bg-[#0f172a]/75 border border-white/10 rounded-xl shadow-2xl backdrop-blur-md px-5 py-4 text-white">
+          <!-- Header -->
+          <div class="flex items-center justify-between gap-3 mb-3 pb-2 border-b border-white/10">
             <div>
-              <div class="text-xs font-semibold text-on-surface">Network Topology</div>
-              <div class="text-[11px] text-on-surface-variant">Layer perangkat dan jalur fiber</div>
+              <div class="text-xs font-bold uppercase tracking-wider text-blue-400">Legenda Jaringan & Status</div>
+              <div class="text-[11px] text-slate-300">Panduan indikator kondisi infrastruktur & CPE</div>
             </div>
-            <button @click="loadDevices" class="w-8 h-8 rounded border border-outline-variant bg-surface-container-lowest hover:bg-surface-container-high text-on-surface-variant flex items-center justify-center transition-colors cursor-pointer" title="Refresh map">
+            <button @click="loadDevices" class="w-8 h-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-all cursor-pointer" title="Refresh Map">
               <span class="material-symbols-outlined text-[18px]">refresh</span>
             </button>
           </div>
 
-          <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] font-medium mb-3">
-            <div class="flex items-center gap-1.5 text-on-surface-variant">
-              <div class="w-3 h-3 bg-[#0050cb] rounded-full border-2 border-white shadow-sm"></div> OLT
+          <!-- Legend Grid -->
+          <div class="grid grid-cols-2 gap-x-4 gap-y-2.5 text-[11px] font-semibold text-slate-200 mb-4">
+            <!-- OLT -->
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-4 bg-[#0050cb] rounded border border-white/20 shadow flex items-center justify-center font-bold text-[8px]">OLT</div>
+              <span>OLT (Pusat)</span>
             </div>
-            <div class="flex items-center gap-1.5 text-on-surface-variant">
-              <div class="w-3 h-3 bg-[#525b62] rounded-full border-2 border-white shadow-sm"></div> ODC
+            <!-- ODC -->
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-3 bg-[#64748b] rounded border border-white/20 shadow"></div>
+              <span>ODC (Splitter 1)</span>
             </div>
-            <div class="flex items-center gap-1.5 text-on-surface-variant">
-              <div class="w-3 h-3 bg-[#d97706] rounded-full border-2 border-white shadow-sm"></div> ODP
+            <!-- ODP (Normal) -->
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-3 bg-[#d97706] rounded border border-white/20 shadow"></div>
+              <span>ODP (Normal)</span>
             </div>
-            <div class="flex items-center gap-1.5 text-on-surface-variant">
-              <div class="w-3 h-3 bg-[#006e25] rounded-full border-2 border-white shadow-sm"></div> Client
+            <!-- ODP Mass LOS -->
+            <div class="flex items-center gap-2">
+              <div class="w-4 h-3 bg-[#dc2626] rounded border border-white/20 shadow animate-pulse"></div>
+              <span class="text-red-400">ODP Mass LOS (Putus)</span>
+            </div>
+            <!-- Client Online -->
+            <div class="flex items-center gap-2">
+              <div class="w-3.5 h-3.5 bg-[#16a34a] rounded-full border border-white/20 shadow"></div>
+              <span>Client (Online)</span>
+            </div>
+            <!-- Client Warning -->
+            <div class="flex items-center gap-2">
+              <div class="w-3.5 h-3.5 bg-[#f59e0b] rounded-full border border-white/20 shadow"></div>
+              <span>Sinyal Lemah (&gt;-27dB)</span>
+            </div>
+            <!-- Client Offline -->
+            <div class="flex items-center gap-2">
+              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white/20 shadow animate-pulse"></div>
+              <span class="text-red-400">LOS (Kabel Putus)</span>
+            </div>
+            <!-- Client Mati Listrik -->
+            <div class="flex items-center gap-2">
+              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white/20 shadow flex items-center justify-center text-[9px]">🔌</div>
+              <span>CPE Mati Listrik</span>
             </div>
           </div>
 
-          <div class="grid grid-cols-1 sm:grid-cols-2 gap-2">
-            <button @click="triggerSync" class="bg-primary-container hover:opacity-90 text-on-primary-container px-3 py-2 rounded text-xs font-semibold shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-opacity border border-primary-container">
+          <!-- Actions -->
+          <div class="grid grid-cols-2 gap-2.5 pt-1.5 border-t border-white/10">
+            <button @click="triggerSync" class="bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-xs font-bold shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all border border-blue-500/20">
               <span class="material-symbols-outlined text-[16px]">sync</span> Sync PPPoE
             </button>
-            <button @click="triggerClear" class="bg-surface-container-lowest hover:bg-error-container text-error px-3 py-2 rounded text-xs font-semibold shadow-sm flex items-center justify-center gap-2 cursor-pointer transition-colors border border-outline-variant">
-              <span class="material-symbols-outlined text-[16px]">delete</span> Clear
+            <button @click="triggerClear" class="bg-white/5 hover:bg-red-900/30 text-slate-300 hover:text-red-300 hover:border-red-500/30 py-2 rounded-lg text-xs font-bold shadow flex items-center justify-center gap-2 cursor-pointer transition-all border border-white/10">
+              <span class="material-symbols-outlined text-[16px]">delete</span> Clear Map
             </button>
           </div>
        </div>
