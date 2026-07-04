@@ -613,13 +613,11 @@ const cwmpHandler = async (c: any) => {
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
         'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
-        'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDeviceNumberOfEntries',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
         'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
-        'InternetGatewayDevice.LANDevice.1.Hosts.Host.', // Ambil seluruh daftar Host
       ]
 
       if (isHuawei) {
@@ -629,7 +627,6 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.AssociatedDeviceNumberOfEntries',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower',
           'InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature',
@@ -643,7 +640,6 @@ const cwmpHandler = async (c: any) => {
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.AssociatedDeviceNumberOfEntries',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower',
           'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature',
@@ -926,6 +922,15 @@ const cwmpHandler = async (c: any) => {
     if (bodyText.includes('Fault') || bodyText.includes('fault')) {
       const faultCode = (bodyText.match(/<FaultCode>(\d+)<\/FaultCode>/) || [])[1] || '?';
       console.log(`[CWMP] Modem ${clientIp} mengirim Fault ${faultCode}`)
+
+      if (faultCode === '9005' && (session.stage === 'host_names' || session.stage === 'host_values')) {
+        console.log(`[CWMP] Host list tidak didukung oleh ${clientIp}. Simpan data modem utama tanpa daftar host.`)
+        const params = session.pendingModemData || {}
+        params.connectedHosts = []
+        await saveModemDataToDb(db, session, params, clientIp)
+        cwmpSessions.delete(clientIp)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+      }
       
       if (faultCode === '9005' && !session.gponFaultRetried && session.currentModemSN) {
         session.gponFaultRetried = true;
@@ -933,10 +938,25 @@ const cwmpHandler = async (c: any) => {
         cwmpSessions.set(clientIp, session)
         
         const baseParams = [
+          'InternetGatewayDevice.DeviceInfo.Manufacturer',
+          'InternetGatewayDevice.DeviceInfo.ModelName',
+          'InternetGatewayDevice.DeviceInfo.ProductClass',
+          'InternetGatewayDevice.DeviceInfo.HardwareVersion',
+          'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
           'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
+          'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
+          'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
         ];
-        console.log(`[CWMP] Retry tanpa parameter GPON untuk ${clientIp}`);
+        console.log(`[CWMP] Retry tanpa parameter GPON/host rawan fault untuk ${clientIp}`);
         const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, baseParams);
         return new Response(retryXml, {
           headers: {
