@@ -577,12 +577,29 @@ const handlePushConfig = async () => {
 
         <!-- OLT Section -->
         <section v-else class="detail-card node-card">
-          <div class="card-heading">
-            <span class="material-symbols-outlined">dns</span>
-            <h3>Server OLT</h3>
+          <div class="card-heading split">
+            <div>
+              <span class="material-symbols-outlined">dns</span>
+              <h3>Server OLT</h3>
+            </div>
+            <span v-if="saveMessage" class="save-message" :class="{ 'is-error': saveMessage.startsWith('Gagal') }">
+              {{ saveMessage }}
+            </span>
           </div>
-          <div class="info-list mt-3">
-            <div class="info-row"><span>Nama</span><strong>{{ displayValue(device?.name) }}</strong></div>
+
+          <form @submit.prevent="handleSaveDetails" class="node-form mt-3">
+            <label class="form-field full">
+              <span>Nama Server OLT</span>
+              <input v-model="detailForm.name" required />
+            </label>
+            <button type="submit" :disabled="isSavingDetails" class="save-button compact-btn">
+              <span v-if="isSavingDetails" class="material-symbols-outlined spin">refresh</span>
+              <span v-else class="material-symbols-outlined">save</span>
+              Simpan Nama OLT
+            </button>
+          </form>
+
+          <div class="info-list compact-info mt-4">
             <div class="info-row"><span>Lat</span><strong class="mono">{{ displayValue(device?.lat) }}</strong></div>
             <div class="info-row"><span>Long</span><strong class="mono">{{ displayValue(device?.lng) }}</strong></div>
           </div>

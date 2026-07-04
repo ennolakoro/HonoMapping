@@ -155,6 +155,140 @@ const clearEditHandles = () => {
   editPolyline = null
 }
 
+const renderEditHandles = () => {
+  editHandles.forEach(h => {
+    if (map) map.removeLayer(h)
+  })
+  editHandles = []
+
+  if (!activeEditDevice.value || !editPolyline) return
+
+  const coords = editPolyline.getLatLngs().map(ll => [ll.lat, ll.lng])
+
+  // A. Main Handles untuk bend points (indeks 1 s.d length-2)
+  for (let i = 1; i < coords.length - 1; i++) {
+    const coord = coords[i]
+    const handleIcon = L.divIcon({
+      className: 'cable-edit-handle',
+      html: '<div style="width:14px; height:14px; border-radius:50%; background:#fb923c; border:2.5px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.4); cursor:pointer;"></div>',
+      iconSize: [14, 14],
+      iconAnchor: [7, 7]
+    })
+
+    const handle = L.marker(coord, {
+      icon: handleIcon,
+      draggable: true
+    }).addTo(map)
+
+    handle.on('drag', (ev) => {
+      const newLatLng = ev.latlng
+      coords[i] = [newLatLng.lat, newLatLng.lng]
+      editPolyline.setLatLngs(coords)
+      
+      // Update label jarak real-time
+      const distanceMeters = calculatePolylineLength(coords)
+      const distanceStr = distanceMeters >= 1000
+        ? `${(distanceMeters / 1000).toFixed(2)} km`
+        : `${Math.round(distanceMeters)} m`
+      const midpoint = getPolylineMidpoint(coords)
+      if (midpoint && editPolyline.lengthMarker) {
+        editPolyline.lengthMarker.setLatLng(midpoint)
+        editPolyline.lengthMarker.setIcon(L.divIcon({
+          className: 'cable-length-label',
+          html: `<div>${distanceStr}</div>`,
+          iconSize: [60, 20],
+          iconAnchor: [30, 10]
+        }))
+      }
+    })
+
+    handle.on('dragend', () => {
+      renderEditHandles()
+    })
+
+    handle.on('dblclick', (e) => {
+      L.DomEvent.stopPropagation(e)
+      if (coords.length > 2) {
+        coords.splice(i, 1)
+        editPolyline.setLatLngs(coords)
+        renderEditHandles()
+      }
+    })
+
+    editHandles.push(handle)
+  }
+
+  // B. Midpoint Handles untuk menyisipkan titik baru
+  for (let i = 0; i < coords.length - 1; i++) {
+    const p1 = coords[i]
+    const p2 = coords[i+1]
+    const midLat = (p1[0] + p2[0]) / 2
+    const midLng = (p1[1] + p2[1]) / 2
+
+    const midIcon = L.divIcon({
+      className: 'cable-mid-handle',
+      html: '<div style="width:10px; height:10px; border-radius:50%; background:#fdba74; border:1.5px solid white; box-shadow:0 1px 4px rgba(0,0,0,0.3); opacity:0.8; cursor:pointer;"></div>',
+      iconSize: [10, 10],
+      iconAnchor: [5, 5]
+    })
+
+    const midMarker = L.marker([midLat, midLng], {
+      icon: midIcon,
+      draggable: true
+    }).addTo(map)
+
+    midMarker.on('dragstart', (ev) => {
+      const startLatLng = ev.target.getLatLng()
+      coords.splice(i + 1, 0, [startLatLng.lat, startLatLng.lng])
+      editPolyline.setLatLngs(coords)
+    })
+
+    midMarker.on('drag', (ev) => {
+      const newLatLng = ev.latlng
+      coords[i + 1] = [newLatLng.lat, newLatLng.lng]
+      editPolyline.setLatLngs(coords)
+      
+      const distanceMeters = calculatePolylineLength(coords)
+      const distanceStr = distanceMeters >= 1000
+        ? `${(distanceMeters / 1000).toFixed(2)} km`
+        : `${Math.round(distanceMeters)} m`
+      const midpoint = getPolylineMidpoint(coords)
+      if (midpoint && editPolyline.lengthMarker) {
+        editPolyline.lengthMarker.setLatLng(midpoint)
+        editPolyline.lengthMarker.setIcon(L.divIcon({
+          className: 'cable-length-label',
+          html: `<div>${distanceStr}</div>`,
+          iconSize: [60, 20],
+          iconAnchor: [30, 10]
+        }))
+      }
+    })
+
+    midMarker.on('dragend', () => {
+      renderEditHandles()
+    })
+
+    editHandles.push(midMarker)
+  }
+}
+
+const saveAndExitEditPath = async () => {
+  if (activeEditDevice.value && editPolyline) {
+    const finalCoords = editPolyline.getLatLngs().map(ll => [ll.lat, ll.lng])
+    try {
+      await api.updateDevice(activeEditDevice.value.id, {
+        type: activeEditDevice.value.type,
+        name: activeEditDevice.value.name,
+        cablePath: JSON.stringify(finalCoords)
+      })
+      activeEditDevice.value.cablePath = JSON.stringify(finalCoords)
+    } catch (err) {
+      console.error("Gagal menyimpan rute kabel:", err)
+    }
+  }
+  clearEditHandles()
+}
+
 const hasCoords = (device) => {
   const lat = Number(device?.lat)
   const lng = Number(device?.lng)
@@ -565,6 +699,7 @@ const loadDevices = async () => {
                   lengthMarker = L.marker(midpoint, { icon: lengthLabelIcon, interactive: false })
                   lengthMarker.addTo(polylineLayer)
                 }
+                polyline.lengthMarker = lengthMarker
               }
             }
 
@@ -579,44 +714,7 @@ const loadDevices = async () => {
               clearEditHandles()
               activeEditDevice.value = device
               editPolyline = polyline
-
-              const currentCoords = polyline.getLatLngs().map(latlng => [latlng.lat, latlng.lng])
-
-              currentCoords.forEach((coord, idx) => {
-                const handleIcon = L.divIcon({
-                  className: 'cable-edit-handle',
-                  html: '<div style="width:12px; height:12px; border-radius:50%; background:#fb923c; border:2px solid white; box-shadow:0 2px 6px rgba(0,0,0,0.3);"></div>',
-                  iconSize: [12, 12],
-                  iconAnchor: [6, 6]
-                })
-
-                const handle = L.marker(coord, {
-                  icon: handleIcon,
-                  draggable: true
-                }).addTo(map)
-
-                handle.on('drag', (ev) => {
-                  const newLatLng = ev.latlng
-                  currentCoords[idx] = [newLatLng.lat, newLatLng.lng]
-                  polyline.setLatLngs(currentCoords)
-                  updateLengthLabel(currentCoords)
-                })
-
-                handle.on('dragend', async () => {
-                  try {
-                    await api.updateDevice(device.id, {
-                      type: device.type,
-                      name: device.name,
-                      cablePath: JSON.stringify(currentCoords)
-                    })
-                    device.cablePath = JSON.stringify(currentCoords)
-                  } catch (err) {
-                    console.error("Failed to save edited path:", err)
-                  }
-                })
-
-                editHandles.push(handle)
-              })
+              renderEditHandles()
             })
 
             polyline.addTo(polylineLayer)
@@ -951,6 +1049,18 @@ watch(unmappedClients, (clients) => {
       <button @click="store.cancelAdd()">Batal</button>
     </div>
 
+    <!-- Banner Info Edit Rute Kabel -->
+    <div v-if="activeEditDevice" class="absolute top-4 left-1/2 z-20 -translate-x-1/2 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-4 text-white flex items-center gap-4 max-w-[calc(100%-2rem)] w-full md:w-auto">
+      <span class="material-symbols-outlined text-orange-400 text-2xl flex-shrink-0">timeline</span>
+      <div class="flex-1 min-w-0">
+        <h4 class="text-xs font-bold text-slate-300">Mengedit Jalur Kabel: {{ activeEditDevice.name }}</h4>
+        <p class="text-[10px] text-slate-400 mt-0.5 leading-relaxed">Geser titik jingga untuk membelokkan rute. Tarik titik jingga kecil untuk menyisipkan titik baru. Klik ganda titik untuk menghapus.</p>
+      </div>
+      <button @click="saveAndExitEditPath" class="bg-blue-600 hover:bg-blue-500 text-white px-3.5 py-2 rounded-lg text-xs font-black transition-all shadow-md flex-shrink-0 cursor-pointer">
+        Simpan Jalur
+      </button>
+    </div>
+
     <div v-if="isWorkflowOpen" class="workflow-modal-backdrop" @click.self="isWorkflowOpen = false">
       <aside class="workflow-panel">
         <header class="workflow-toggle">
@@ -1099,71 +1209,53 @@ watch(unmappedClients, (clients) => {
     </section>
     
     <!-- Floating Map Controls & Legend -->
-    <div class="absolute left-4 bottom-4 md:left-6 md:bottom-6 z-10 w-[calc(100%-2rem)] max-w-[390px] pointer-events-auto">
-       <div class="bg-[#0f172a]/75 border border-white/10 rounded-xl shadow-2xl backdrop-blur-md px-5 py-4 text-white">
-          <!-- Header -->
-          <div class="flex items-center justify-between gap-3 mb-3 pb-2 border-b border-white/10">
-            <div>
-              <div class="text-xs font-bold uppercase tracking-wider text-blue-400">Legenda Jaringan & Status</div>
-              <div class="text-[11px] text-slate-300">Panduan indikator kondisi infrastruktur & CPE</div>
+    <div class="absolute left-4 bottom-4 md:left-6 md:bottom-6 z-10 w-[calc(100%-2rem)] max-w-[280px] pointer-events-auto">
+       <div class="bg-transparent px-4 py-3 text-slate-800">
+          <div class="flex flex-col gap-2.5 text-[11px] font-bold text-slate-900 bg-white/40 backdrop-blur-[3px] p-2.5 rounded-lg border border-slate-300/30">
+            <!-- Header Legend -->
+            <div class="text-[11px] font-bold uppercase tracking-wider text-slate-700 border-b border-slate-300/20 pb-1.5 mb-0.5">
+              Legend
             </div>
-            <button @click="loadDevices" class="w-8 h-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-white flex items-center justify-center transition-all cursor-pointer" title="Refresh Map">
-              <span class="material-symbols-outlined text-[18px]">refresh</span>
-            </button>
-          </div>
-
-          <!-- Legend Grid -->
-          <div class="grid grid-cols-2 gap-x-4 gap-y-2.5 text-[11px] font-semibold text-slate-200 mb-4">
             <!-- OLT -->
-            <div class="flex items-center gap-2">
-              <div class="w-4 h-4 bg-[#0050cb] rounded border border-white/20 shadow flex items-center justify-center font-bold text-[8px]">OLT</div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-4 h-4 bg-[#0050cb] rounded border border-white shadow-sm flex items-center justify-center font-bold text-[8px] text-white">OLT</div>
               <span>OLT (Pusat)</span>
             </div>
             <!-- ODC -->
-            <div class="flex items-center gap-2">
-              <div class="w-4 h-3 bg-[#64748b] rounded border border-white/20 shadow"></div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-4 h-3 bg-[#64748b] rounded border border-white shadow-sm"></div>
               <span>ODC (Splitter 1)</span>
             </div>
             <!-- ODP (Normal) -->
-            <div class="flex items-center gap-2">
-              <div class="w-4 h-3 bg-[#d97706] rounded border border-white/20 shadow"></div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-4 h-3 bg-[#d97706] rounded border border-white shadow-sm"></div>
               <span>ODP (Normal)</span>
             </div>
             <!-- ODP Mass LOS -->
-            <div class="flex items-center gap-2">
-              <div class="w-4 h-3 bg-[#dc2626] rounded border border-white/20 shadow animate-pulse"></div>
-              <span class="text-red-400">ODP Mass LOS (Putus)</span>
+            <div class="flex items-center gap-2.5">
+              <div class="w-4 h-3 bg-[#dc2626] rounded border border-white shadow-sm animate-pulse"></div>
+              <span class="text-red-600 font-bold">ODP Mass LOS (Putus)</span>
             </div>
             <!-- Client Online -->
-            <div class="flex items-center gap-2">
-              <div class="w-3.5 h-3.5 bg-[#16a34a] rounded-full border border-white/20 shadow"></div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-3.5 h-3.5 bg-[#16a34a] rounded-full border border-white shadow-sm"></div>
               <span>Client (Online)</span>
             </div>
             <!-- Client Warning -->
-            <div class="flex items-center gap-2">
-              <div class="w-3.5 h-3.5 bg-[#f59e0b] rounded-full border border-white/20 shadow"></div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-3.5 h-3.5 bg-[#f59e0b] rounded-full border border-white shadow-sm"></div>
               <span>Sinyal Lemah (&gt;-27dB)</span>
             </div>
             <!-- Client Offline -->
-            <div class="flex items-center gap-2">
-              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white/20 shadow animate-pulse"></div>
-              <span class="text-red-400">LOS (Kabel Putus)</span>
+            <div class="flex items-center gap-2.5">
+              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white shadow-sm animate-pulse"></div>
+              <span class="text-red-600 font-bold">LOS (Kabel Putus)</span>
             </div>
             <!-- Client Mati Listrik -->
-            <div class="flex items-center gap-2">
-              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white/20 shadow flex items-center justify-center text-[9px]">🔌</div>
+            <div class="flex items-center gap-2.5">
+              <div class="w-3.5 h-3.5 bg-[#dc2626] rounded-full border border-white shadow-sm flex items-center justify-center text-[9px]">🔌</div>
               <span>CPE Mati Listrik</span>
             </div>
-          </div>
-
-          <!-- Actions -->
-          <div class="grid grid-cols-2 gap-2.5 pt-1.5 border-t border-white/10">
-            <button @click="triggerSync" class="bg-blue-600 hover:bg-blue-500 text-white py-2 rounded-lg text-xs font-bold shadow-md flex items-center justify-center gap-2 cursor-pointer transition-all border border-blue-500/20">
-              <span class="material-symbols-outlined text-[16px]">sync</span> Sync PPPoE
-            </button>
-            <button @click="triggerClear" class="bg-white/5 hover:bg-red-900/30 text-slate-300 hover:text-red-300 hover:border-red-500/30 py-2 rounded-lg text-xs font-bold shadow flex items-center justify-center gap-2 cursor-pointer transition-all border border-white/10">
-              <span class="material-symbols-outlined text-[16px]">delete</span> Clear Map
-            </button>
           </div>
        </div>
     </div>

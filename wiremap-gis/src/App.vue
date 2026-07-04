@@ -9,6 +9,7 @@ import { store } from './store'
 
 const isLoggedIn = ref(false)
 const isRouterModalOpen = ref(false)
+const isRouterConfigured = ref(true)
 const queueCount = ref(0)
 
 const handleQueueCount = (event) => {
@@ -32,9 +33,13 @@ const checkConnectionSettings = async () => {
     const settings = await api.getSettings()
     if (!settings.MIKROTIK_IP || !settings.MIKROTIK_USER || !settings.MIKROTIK_PASS) {
       isRouterModalOpen.value = true
+      isRouterConfigured.value = false
+    } else {
+      isRouterConfigured.value = true
     }
   } catch {
     isRouterModalOpen.value = true
+    isRouterConfigured.value = false
   }
 }
 
@@ -124,8 +129,15 @@ const handleSaveDevice = async (deviceData) => {
         <button @click="store.cancelAdd()" class="underline text-xs hover:text-white/80">Batal</button>
       </div>
 
-      <LeafletMap class="flex-1" />
-
+      <LeafletMap v-if="isRouterConfigured" class="flex-1" />
+      <div v-else class="flex-1 flex flex-col items-center justify-center bg-slate-900 text-white gap-4 p-6">
+        <span class="material-symbols-outlined text-6xl text-blue-500 animate-pulse">settings_ethernet</span>
+        <h2 class="text-xl font-bold">Konfigurasi Router API Diperlukan</h2>
+        <p class="text-slate-400 text-center max-w-md text-sm leading-relaxed">Anda harus mengisi kredensial API Mikrotik terlebih dahulu sebelum dapat mengakses peta GIS dan memproses data topologi pelanggan.</p>
+        <button @click="isRouterModalOpen = true" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2.5 rounded-lg font-bold shadow-md transition-all cursor-pointer">
+          Buka Konfigurasi Router
+        </button>
+      </div>
     </main>
 
     <AddDeviceModal @save="handleSaveDevice" />
@@ -133,6 +145,7 @@ const handleSaveDevice = async (deviceData) => {
     <RouterConfigModal
       :is-open="isRouterModalOpen"
       @close="isRouterModalOpen = false"
+      @saved="checkConnectionSettings"
     />
   </template>
 </template>
