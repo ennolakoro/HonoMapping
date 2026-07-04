@@ -100,7 +100,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse } from './cwmp'
+import { createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -272,6 +272,9 @@ interface CwmpSession {
   currentSoftwareVersion: string | null;
   gponFaultRetried: boolean;
   updatedAt: number;
+  // Multi-stage host fetching
+  stage: 'params' | 'host_names' | 'host_values' | 'done';
+  pendingModemData?: any; // data dari stage 1 sementara disimpan
 }
 
 const cwmpSessions = new Map<string, CwmpSession>();
@@ -380,6 +383,89 @@ const cleanExpiredSessions = () => {
         })
       } else {
         syncProgress.delete(ip)
+      }
+    }
+  }
+}
+
+const saveModemDataToDb = async (db: any, session: CwmpSession, params: any, clientIp: string) => {
+  if (session.currentModemSN) {
+    try {
+      const modemParams = stripUndefined({
+        snModem: session.currentModemSN || undefined,
+        wifiSsid: params.ssid ?? undefined,
+        wifiPassword: params.password ?? undefined,
+        wifiSsid5g: params.ssid5g ?? undefined,
+        wifiPassword5g: params.password5g ?? undefined,
+        lanStatus: params.lanStatus ?? undefined,
+        associatedDevices: params.associatedDevices ?? undefined,
+        connectedHosts: params.connectedHosts ? JSON.stringify(params.connectedHosts) : undefined,
+        brand: params.brand ?? session.currentManufacturer ?? undefined,
+        modelName: params.modelName ?? session.currentModelName ?? undefined,
+        hardwareVersion: params.hardwareVersion ?? session.currentHardwareVersion ?? undefined,
+        softwareVersion: params.softwareVersion ?? session.currentSoftwareVersion ?? undefined,
+        macAddress: params.macAddress ?? undefined,
+        wanIp: params.wanIp && !isPublicIp(params.wanIp) ? params.wanIp : undefined,
+        lanIp: session.currentClientIp || (isPublicIp(clientIp) ? undefined : clientIp),
+        rxPower: params.rxPower ?? undefined,
+        txPower: params.txPower ?? undefined,
+        temperature: params.temperature ?? undefined,
+        voltage: params.voltage ?? undefined
+      })
+
+      let updatedRows: { id: number }[] = []
+      if (session.currentTriggeredClientId) {
+        updatedRows = await db.update(clients)
+          .set(modemParams)
+          .where(eq(clients.id, session.currentTriggeredClientId))
+          .returning({ id: clients.id })
+      }
+
+      if (updatedRows.length === 0) {
+        updatedRows = await db.update(clients)
+          .set(modemParams)
+          .where(eq(clients.snModem, session.currentModemSN))
+          .returning({ id: clients.id })
+      }
+
+      if (updatedRows.length === 0) {
+        console.warn(`[DB] Tidak ada client yang cocok untuk SN ${session.currentModemSN}`)
+        const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+        const prog = getFirstProgress(progressKeys)
+        if (prog) {
+          setProgressForKeys(progressKeys, {
+            ...prog,
+            progress: 100,
+            status: 'failed',
+            error: 'CPE tidak ditemukan di database',
+            updatedAt: Date.now()
+          })
+        }
+      } else {
+        console.log(`[DB] Data modem ${session.currentModemSN} berhasil diupdate untuk client id: ${updatedRows.map(r=>r.id).join(',')}`)
+        const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+        const prog = getFirstProgress(progressKeys)
+        if (prog) {
+          setProgressForKeys(progressKeys, {
+            ...prog,
+            progress: 100,
+            status: 'success',
+            updatedAt: Date.now()
+          })
+        }
+      }
+    } catch (e: any) {
+      console.error("Gagal update parameter ke DB:", e)
+      const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+      const prog = getFirstProgress(progressKeys)
+      if (prog) {
+        setProgressForKeys(progressKeys, {
+          ...prog,
+          progress: 100,
+          status: 'failed',
+          error: e.message || 'Gagal menyimpan ke database',
+          updatedAt: Date.now()
+        })
       }
     }
   }
@@ -625,7 +711,9 @@ const cwmpHandler = async (c: any) => {
         currentHardwareVersion: informData.hardwareVersion || null,
         currentSoftwareVersion: informData.softwareVersion || null,
         gponFaultRetried: false,
-        updatedAt: Date.now()
+        updatedAt: Date.now(),
+        stage: 'params',
+        pendingModemData: undefined,
       }
       cwmpSessions.set(clientIp, session)
 
@@ -740,94 +828,94 @@ const cwmpHandler = async (c: any) => {
     }
     
     if (bodyText.includes('GetParameterValuesResponse')) {
-      // 1. Terima jawaban dari modem (WLAN/LAN/SSID)
-      const params = parseGetParameterValuesResponse(bodyText)
-      console.log(`Mini ACS Menerima Parameter Modem dari [${clientIp}]:`, params)
+      const currentStage = session.stage || 'params';
       
-      // 2. Simpan ke database
-      if (session.currentModemSN) {
-        try {
-          const modemParams = stripUndefined({
-            snModem: session.currentModemSN || undefined,
-            wifiSsid: params.ssid ?? undefined,
-            wifiPassword: params.password ?? undefined,
-            wifiSsid5g: params.ssid5g ?? undefined,
-            wifiPassword5g: params.password5g ?? undefined,
-            lanStatus: params.lanStatus ?? undefined,
-            associatedDevices: params.associatedDevices ?? undefined,
-            connectedHosts: params.connectedHosts ? JSON.stringify(params.connectedHosts) : undefined,
-            brand: params.brand ?? session.currentManufacturer ?? undefined,
-            modelName: params.modelName ?? session.currentModelName ?? undefined,
-            hardwareVersion: params.hardwareVersion ?? session.currentHardwareVersion ?? undefined,
-            softwareVersion: params.softwareVersion ?? session.currentSoftwareVersion ?? undefined,
-            macAddress: params.macAddress ?? undefined,
-            wanIp: params.wanIp && !isPublicIp(params.wanIp) ? params.wanIp : undefined,
-            lanIp: session.currentClientIp || (isPublicIp(clientIp) ? undefined : clientIp),
-            rxPower: params.rxPower ?? undefined,
-            txPower: params.txPower ?? undefined,
-            temperature: params.temperature ?? undefined,
-            voltage: params.voltage ?? undefined
+      if (currentStage === 'params') {
+        const params = parseGetParameterValuesResponse(bodyText)
+        console.log(`Mini ACS Menerima Parameter Modem dari [${clientIp}] (Stage 1):`, params)
+        
+        session.pendingModemData = params;
+        session.stage = 'host_names';
+        session.updatedAt = Date.now();
+        cwmpSessions.set(clientIp, session);
+        
+        // Update progress tracker
+        const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+        const prog = getFirstProgress(progressKeys)
+        if (prog) {
+          setProgressForKeys(progressKeys, {
+            ...prog,
+            progress: 80,
+            status: 'fetching',
+            updatedAt: Date.now()
           })
-
-          let updatedRows: { id: number }[] = []
-          if (session.currentTriggeredClientId) {
-            updatedRows = await db.update(clients)
-              .set(modemParams)
-              .where(eq(clients.id, session.currentTriggeredClientId))
-              .returning({ id: clients.id })
-          }
-
-          if (updatedRows.length === 0) {
-            updatedRows = await db.update(clients)
-              .set(modemParams)
-              .where(eq(clients.snModem, session.currentModemSN))
-              .returning({ id: clients.id })
-          }
-
-          if (updatedRows.length === 0) {
-            console.warn(`[DB] Tidak ada client yang cocok untuk SN ${session.currentModemSN}`)
-            const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
-            const prog = getFirstProgress(progressKeys)
-            if (prog) {
-              setProgressForKeys(progressKeys, {
-                ...prog,
-                progress: 100,
-                status: 'failed',
-                error: 'CPE tidak ditemukan di database',
-                updatedAt: Date.now()
-              })
-            }
-          } else {
-            console.log(`[DB] Data modem ${session.currentModemSN} berhasil diupdate untuk client id: ${updatedRows.map(r=>r.id).join(',')}`)
-            const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
-            const prog = getFirstProgress(progressKeys)
-            if (prog) {
-              setProgressForKeys(progressKeys, {
-                ...prog,
-                progress: 100,
-                status: 'success',
-                updatedAt: Date.now()
-              })
-            }
-          }
-        } catch (e: any) {
-          console.error("Gagal update parameter ke DB:", e)
-          const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
-          const prog = getFirstProgress(progressKeys)
-          if (prog) {
-            setProgressForKeys(progressKeys, {
-              ...prog,
-              progress: 100,
-              status: 'failed',
-              error: e.message || 'Gagal menyimpan ke database',
-              updatedAt: Date.now()
-            })
-          }
         }
+        
+        console.log(`[CWMP Stage 1] Mengirim GetParameterNames ke [${clientIp}] untuk mendeteksi host terhubung...`)
+        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, 'InternetGatewayDevice.LANDevice.1.Hosts.', false);
+        return new Response(responseXml, {
+          headers: {
+            'Content-Type': 'text/xml',
+            'Server': 'Hono-MiniACS',
+            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+          }
+        })
+      } else if (currentStage === 'host_values') {
+        const hosts = parseHostsFromGetParameterValues(bodyText)
+        console.log(`Mini ACS Menerima Hosts dari [${clientIp}] (Stage 3):`, hosts.length, 'hosts')
+        
+        const params = session.pendingModemData || {}
+        params.connectedHosts = hosts;
+        
+        await saveModemDataToDb(db, session, params, clientIp)
+        
+        cwmpSessions.delete(clientIp)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
-      
-      cwmpSessions.delete(clientIp)
-      return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+    }
+    
+    if (bodyText.includes('GetParameterNamesResponse')) {
+      if (session.stage === 'host_names') {
+        const hostParams = parseGetParameterNamesResponse(bodyText)
+        console.log(`Mini ACS Menerima Host Parameter Names dari [${clientIp}] (Stage 2):`, hostParams.length, 'parameters')
+        
+        if (hostParams.length === 0) {
+          console.log(`[CWMP Stage 2] Tidak ada host terhubung / parameter tidak didukung. Selesai.`)
+          const params = session.pendingModemData || {}
+          params.connectedHosts = []
+          
+          await saveModemDataToDb(db, session, params, clientIp)
+          
+          cwmpSessions.delete(clientIp)
+          return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+        }
+        
+        session.stage = 'host_values';
+        session.updatedAt = Date.now();
+        cwmpSessions.set(clientIp, session);
+        
+        // Update progress tracker
+        const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+        const prog = getFirstProgress(progressKeys)
+        if (prog) {
+          setProgressForKeys(progressKeys, {
+            ...prog,
+            progress: 90,
+            status: 'fetching',
+            updatedAt: Date.now()
+          })
+        }
+        
+        console.log(`[CWMP Stage 2] Mengirim GetParameterValues ke [${clientIp}] untuk ${hostParams.length} host params`)
+        const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, hostParams);
+        return new Response(responseXml, {
+          headers: {
+            'Content-Type': 'text/xml',
+            'Server': 'Hono-MiniACS',
+            'Set-Cookie': `session=${clientIp}; Path=/; HttpOnly`
+          }
+        })
+      }
     }
 
     // Jika modem mengirim Fault 9005 (parameter tidak valid)

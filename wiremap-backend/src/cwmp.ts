@@ -38,7 +38,12 @@ ${paramsXml}
 }
 
 // Kirim GetParameterNames untuk menemukan semua nama parameter yang didukung modem
-export function createGetParameterNames(cwmpId: string = '99998', cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0', paramPath: string = 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.') {
+export function createGetParameterNames(
+  cwmpId: string = '99998',
+  cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0',
+  paramPath: string = 'InternetGatewayDevice.LANDevice.1.Hosts.',
+  nextLevel: boolean = false
+) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cwmp="${cwmpNamespace}">
   <soap-env:Header>
@@ -47,10 +52,57 @@ export function createGetParameterNames(cwmpId: string = '99998', cwmpNamespace:
   <soap-env:Body>
     <cwmp:GetParameterNames>
       <ParameterPath>${paramPath}</ParameterPath>
-      <NextLevel>false</NextLevel>
+      <NextLevel>${nextLevel ? 'true' : 'false'}</NextLevel>
     </cwmp:GetParameterNames>
   </soap-env:Body>
 </soap-env:Envelope>`;
+}
+
+/**
+ * Parse respons GetParameterNames dari modem.
+ * Mengembalikan array nama parameter leaf yang relevan untuk host list.
+ */
+export function parseGetParameterNamesResponse(xmlString: string): string[] {
+  const params: string[] = [];
+  const regex = /<Name[^>]*>\s*(InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.\d+\.[^<\s]+)\s*<\/Name>/g;
+  let match;
+  while ((match = regex.exec(xmlString)) !== null) {
+    params.push(match[1].trim());
+  }
+  // Filter hanya IPAddress, MACAddress, HostName, Active
+  const relevant = params.filter(p => /\.(IPAddress|MACAddress|HostName|Active)$/.test(p));
+  console.log('[DEBUG CWMP] GetParameterNames - host params found:', relevant.length, relevant.slice(0, 8));
+  return relevant;
+}
+
+/**
+ * Parse hosts dari GetParameterValuesResponse yang berisi host params spesifik.
+ * Digunakan pada stage kedua setelah GetParameterNames.
+ */
+export function parseHostsFromGetParameterValues(xmlString: string): any[] {
+  const hostRegex = /<Name[^>]*>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
+  const hostsMap: Record<string, any> = {};
+  let match;
+  while ((match = hostRegex.exec(xmlString)) !== null) {
+    const idx = match[1];
+    const key = match[2];
+    const val = match[3].trim();
+    if (!hostsMap[idx]) hostsMap[idx] = {};
+    hostsMap[idx][key] = val;
+  }
+  const hosts: any[] = [];
+  for (const k in hostsMap) {
+    if (hostsMap[k].MACAddress) {
+      hosts.push({
+        ip: hostsMap[k].IPAddress || '',
+        mac: hostsMap[k].MACAddress,
+        hostname: hostsMap[k].HostName || 'Unknown Device',
+        active: hostsMap[k].Active === '1' || hostsMap[k].Active === 'true'
+      });
+    }
+  }
+  console.log('[DEBUG CWMP] parseHostsFromGetParameterValues - hosts:', hosts);
+  return hosts;
 }
 
 
@@ -139,15 +191,14 @@ export function parseGetParameterValuesResponse(xmlString: string) {
   const totalAssoc = (isNaN(assoc24) ? 0 : assoc24) + (isNaN(assoc50) ? 0 : assoc50);
 
   // Ekstrak Hosts (Daftar perangkat yang terhubung ke LAN/WLAN)
+  // Note: Huawei EG8145V5 tidak mengembalikan Hosts.Host melalui GetParameterValues partial path.
+  // Hosts akan diambil via GetParameterNames + GetParameterValues di stage terpisah (lihat index.ts).
   const connectedHosts: any[] = [];
   const hostRegex = /<Name>\s*InternetGatewayDevice\.LANDevice\.1\.Hosts\.Host\.(\d+)\.(IPAddress|MACAddress|HostName|Active)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
   let matchRegex;
   const hostsMap: Record<string, any> = {};
 
   console.log('[DEBUG CWMP] Mencari string Hosts.Host di XML:', xmlString.includes('InternetGatewayDevice.LANDevice.1.Hosts.Host.'));
-  if (xmlString.includes('InternetGatewayDevice.LANDevice.1.Hosts.Host.')) {
-    console.log('[DEBUG CWMP] Snippet XML Host:', xmlString.substring(xmlString.indexOf('InternetGatewayDevice.LANDevice.1.Hosts.Host.') - 50, xmlString.indexOf('InternetGatewayDevice.LANDevice.1.Hosts.Host.') + 300));
-  }
   
   while ((matchRegex = hostRegex.exec(xmlString)) !== null) {
     const hostIndex = matchRegex[1];
@@ -169,7 +220,7 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     }
   }
 
-  console.log('[DEBUG CWMP] Hasil parsing hosts:', connectedHosts);
+  console.log('[DEBUG CWMP] Hasil parsing hosts dari stage 1:', connectedHosts.length);
 
   return {
     ssid: getParameterValue(xmlString, 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID'),
