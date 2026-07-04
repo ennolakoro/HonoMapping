@@ -544,6 +544,8 @@ const cwmpHandler = async (c: any) => {
   let sessionKey = cookieSessionId && cwmpSessions.has(cookieSessionId) ? cookieSessionId : clientIp
   let session = cwmpSessions.get(sessionKey)
 
+  console.log(`[DEBUG TR-069] cookieHeader: "${cookieHeader}" | cookieSessionId: "${cookieSessionId}" | sessionKey: "${sessionKey}" | sessionFound: ${!!session}`)
+
   if (bodyText.includes('Inform')) {
     // 1. Terima event Inform dari Modem
     const informData = parseInform(bodyText)
@@ -892,6 +894,15 @@ const cwmpHandler = async (c: any) => {
           updatedAt: Date.now()
         })
       }
+
+      // PENTING: Reset stage ke 'params' agar GetParameterValuesResponse
+      // berikutnya menyimpan data terbaru (incl. SSID baru) ke database.
+      session.stage = 'params';
+      session.pendingModemData = undefined;
+      session.updatedAt = Date.now();
+      cwmpSessions.set(sessionKey, session);
+
+      console.log(`[CONFIG] SetParameterValuesResponse diterima. Stage direset ke 'params'. Membaca konfigurasi terbaru dari modem...`);
 
       const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
       return new Response(responseXml, {
