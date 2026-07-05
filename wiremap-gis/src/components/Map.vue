@@ -41,7 +41,7 @@ const isDeviceListOpen = ref(false)
 const deviceListSearchQuery = ref('')
 const deviceListTypeFilter = ref('ALL')
 
-const searchType = ref('device')
+const searchType = ref('location')
 const searchLat = ref('')
 const searchLng = ref('')
 
@@ -1556,44 +1556,11 @@ watch(allDevicesData, (newData) => {
         </div>
 
         <!-- Search Box (Single horizontal row!) -->
-        <div class="relative search-container-box flex items-center bg-white/95 border border-slate-200/80 rounded-lg shadow-md p-1 px-1.5 w-[380px] max-w-[380px] backdrop-blur-sm pointer-events-auto gap-1.5 h-9">
+        <div class="relative search-container-box flex items-center bg-white/95 border border-slate-200/80 rounded-lg shadow-md p-1 px-1.5 w-[270px] max-w-[270px] backdrop-blur-sm pointer-events-auto gap-1.5 h-9">
           <!-- Left side: Inputs -->
           <div class="flex-1 min-w-0">
-            <!-- Perangkat Search Input -->
-            <div v-if="searchType === 'device'" class="flex items-center w-full">
-              <input 
-                v-model="searchQuery" 
-                @focus="showSearchResults = true"
-                placeholder="Cari Perangkat / Pelanggan..." 
-                class="bg-transparent border-0 outline-none text-xs w-full text-slate-800 placeholder-slate-400 font-medium" 
-              />
-              
-              <!-- Dropdown Results -->
-              <div v-if="showSearchResults && searchQuery" class="absolute left-0 right-0 top-full mt-1.5 bg-white border border-slate-200 rounded-lg shadow-lg max-h-60 overflow-y-auto z-[100] p-1 flex flex-col gap-0.5 shadow-md">
-                <div v-if="filteredSearchDevices.length === 0" class="p-2 text-xs text-slate-400 text-center">Tidak ditemukan.</div>
-                <button 
-                  v-for="d in filteredSearchDevices" 
-                  :key="d.id"
-                  type="button"
-                  @click="selectSearchDevice(d)"
-                  class="text-left w-full px-2.5 py-1.5 text-xs hover:bg-slate-100 rounded-md border-0 bg-transparent cursor-pointer flex justify-between items-center transition-colors"
-                >
-                  <div class="flex flex-col gap-0.5">
-                    <span class="font-bold text-slate-700 text-[11px]">{{ d.name }}</span>
-                    <span v-if="d.pppoeUsername" class="text-[9px] text-slate-400 font-mono">{{ d.pppoeUsername }}</span>
-                  </div>
-                  <span 
-                    class="text-[8px] font-black px-1.5 py-0.5 rounded"
-                    :class="d.type === 'OLT' ? 'bg-blue-100 text-blue-700' : d.type === 'ODC' ? 'bg-slate-100 text-slate-700' : d.type === 'ODP' ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'"
-                  >
-                    {{ d.type }}
-                  </span>
-                </button>
-              </div>
-            </div>
-
             <!-- Location Lat/Long Inputs -->
-            <div v-else class="flex items-center gap-1 w-full">
+            <div class="flex items-center gap-1 w-full">
               <input 
                 v-model="searchLat" 
                 placeholder="Lat" 
@@ -1607,16 +1574,10 @@ watch(allDevicesData, (newData) => {
             </div>
           </div>
 
-          <!-- Middle: Dropdown selector (Perangkat, Lokasi) -->
-          <select v-model="searchType" class="bg-slate-50 border border-slate-200 rounded px-1 py-0.5 text-[10px] font-bold text-slate-600 outline-none cursor-pointer h-7 shrink-0">
-            <option value="device">Perangkat</option>
-            <option value="location">Lokasi</option>
-          </select>
-
           <!-- Right: Search Symbol + Cari button -->
           <button 
             type="button" 
-            @click.stop="searchType === 'device' ? (showSearchResults = true) : zoomToSearchCoords()" 
+            @click.stop="zoomToSearchCoords" 
             class="bg-primary text-white border-0 rounded px-2.5 py-1 text-[10px] font-bold cursor-pointer hover:bg-primary-hover flex items-center gap-1 shrink-0 h-7"
           >
             <span class="material-symbols-outlined text-[13px] font-bold">search</span>

@@ -22,6 +22,16 @@ const isPushingConfig = ref(false)
 const isSavingWan = ref(false)
 const isSavingAdmin = ref(false)
 const wanDraftRows = ref([])
+const isWanPppFormOpen = ref(false)
+const wanPppForm = ref({
+  slotPath: '',
+  vlanId: '',
+  username: '',
+  password: '',
+  nat: '1',
+  enable: '1',
+  serviceType: 'INTERNET'
+})
 
 const cpeForm = ref({
   pppoeUsername: '',
@@ -59,8 +69,32 @@ const formatDate = (value) => {
 }
 
 const normalize = (value) => String(value ?? '').trim()
+const cleanWanValue = (value) => {
+  const text = normalize(value)
+  return text.includes('<ParameterValueStruct') || text.includes('</') ? '' : text
+}
 
-const selectedWanRows = computed(() => Array.isArray(selectedClient.value?.wanConfig) ? selectedClient.value.wanConfig : [])
+const isInternetWan = (wan) => {
+  const haystack = [
+    wan?.type,
+    wan?.name,
+    wan?.username,
+    wan?.serviceType,
+    wan?.path
+  ].map(value => String(value || '').toLowerCase()).join(' ')
+  if (haystack.includes('tr069') || haystack.includes('voip') || haystack.includes('iptv')) return false
+  return haystack.includes('pppoe') || haystack.includes('internet') || Boolean(wan?.username)
+}
+
+const rawWanRows = computed(() => Array.isArray(selectedClient.value?.wanConfig) ? selectedClient.value.wanConfig : [])
+const selectedWanRows = computed(() => rawWanRows.value.filter(isInternetWan))
+const availableWanPppSlots = computed(() =>
+  rawWanRows.value.filter(wan =>
+    String(wan?.type || '').toLowerCase() === 'pppoe' ||
+    wan?.fieldPaths?.username ||
+    wan?.fieldPaths?.password
+  )
+)
 const selectedWifiRows = computed(() => {
   const configRadios = selectedClient.value?.wifiConfig?.radios
   if (Array.isArray(configRadios) && configRadios.length) return configRadios
@@ -99,15 +133,15 @@ const syncFormsFromClient = () => {
     path: wan.path,
     fieldPaths: wan.fieldPaths || {},
     type: wan.type || '',
-    name: wan.name || '',
-    vlanId: wan.vlanId || '',
-    username: wan.username || '',
+    name: cleanWanValue(wan.name),
+    vlanId: cleanWanValue(wan.vlanId),
+    username: cleanWanValue(wan.username),
     password: wan.password || '',
-    nat: wan.nat || '',
-    enable: wan.enable || '',
-    status: wan.status || '',
+    nat: cleanWanValue(wan.nat),
+    enable: cleanWanValue(wan.enable),
+    status: cleanWanValue(wan.status),
     serviceType: wan.serviceType || '',
-    ipAddress: wan.ipAddress || ''
+    ipAddress: cleanWanValue(wan.ipAddress)
   }))
 }
 
@@ -138,6 +172,15 @@ const selectClient = async (client) => {
     actionMessage.value = 'Gagal buka detail: ' + err.message
     actionState.value = 'failed'
   }
+}
+
+const backToList = () => {
+  selectedClient.value = null
+  actionMessage.value = ''
+  actionState.value = 'idle'
+  actionProgress.value = 0
+  wanDraftRows.value = []
+  isWanPppFormOpen.value = false
 }
 
 const waitForClientSync = async (client, label = 'Menunggu modem Inform...') => {
@@ -312,6 +355,27 @@ const addWanChangedParam = (params, row, current, key, type = 'string') => {
   params.push({ name: path, value: next, type })
 }
 
+const openAddWanPpp = () => {
+  const slot = availableWanPppSlots.value[0]
+  wanPppForm.value = {
+    slotPath: slot?.path || '',
+    vlanId: '',
+    username: selectedClient.value?.pppoeUsername || '',
+    password: '',
+    nat: '1',
+    enable: '1',
+    serviceType: 'INTERNET'
+  }
+  isWanPppFormOpen.value = true
+}
+
+const addParamIfPath = (params, path, value, type = 'string') => {
+  if (!path) return
+  const next = normalize(value)
+  if (!next) return
+  params.push({ name: path, value: next, type })
+}
+
 const saveWanConfig = async () => {
   const client = selectedClient.value
   if (!client?.triggerIp) {
@@ -323,7 +387,7 @@ const saveWanConfig = async () => {
 
   const params = []
   wanDraftRows.value.forEach((row, index) => {
-    const current = selectedWanRows.value[index] || {}
+    const current = selectedWanRows.value.find(wan => wan.path === row.path) || selectedWanRows.value[index] || {}
     addWanChangedParam(params, row, current, 'name')
     addWanChangedParam(params, row, current, 'vlanId')
     addWanChangedParam(params, row, current, 'username')
@@ -332,6 +396,23 @@ const saveWanConfig = async () => {
     addWanChangedParam(params, row, current, 'enable')
     addWanChangedParam(params, row, current, 'serviceType')
   })
+
+  if (isWanPppFormOpen.value) {
+    const slot = availableWanPppSlots.value.find(wan => wan.path === wanPppForm.value.slotPath)
+    if (!slot) {
+      actionMessage.value = 'Slot PPP belum ditemukan. Klik Ambil Data dulu, lalu pilih slot PPP modem.'
+      actionState.value = 'failed'
+      actionProgress.value = 100
+      return
+    }
+    const paths = slot.fieldPaths || {}
+    addParamIfPath(params, paths.vlanId, wanPppForm.value.vlanId, 'unsignedInt')
+    addParamIfPath(params, paths.username, wanPppForm.value.username)
+    addParamIfPath(params, paths.password, wanPppForm.value.password)
+    addParamIfPath(params, paths.nat, wanPppForm.value.nat, 'boolean')
+    addParamIfPath(params, paths.enable, wanPppForm.value.enable, 'boolean')
+    addParamIfPath(params, paths.serviceType, wanPppForm.value.serviceType)
+  }
 
   if (!params.length) {
     actionMessage.value = 'Tidak ada perubahan WAN untuk disimpan'
@@ -454,18 +535,16 @@ watch(() => props.isOpen, (isOpen) => {
           </table>
         </div>
 
-        <aside class="client-detail-side">
-          <div v-if="!selectedClient" class="client-detail-empty">
-            <span class="material-symbols-outlined">touch_app</span>
-            <strong>Pilih client</strong>
-            <p>Klik Lihat pada tabel untuk membuka detail modem.</p>
-          </div>
-
-          <template v-else>
+        <div v-if="selectedClient" class="client-detail-full">
             <div class="detail-head">
-              <div>
-                <span class="eyebrow">{{ selectedClient.clientType }}</span>
-                <h3>{{ selectedClient.name }}</h3>
+              <div class="detail-title-wrap">
+                <button type="button" class="back-btn" @click="backToList" title="Kembali ke daftar client">
+                  <span class="material-symbols-outlined">arrow_back</span>
+                </button>
+                <div>
+                  <span class="eyebrow">{{ selectedClient.clientType }}</span>
+                  <h3>{{ selectedClient.name }}</h3>
+                </div>
               </div>
               <div class="detail-head-actions">
                 <button type="button" @click="informClient" :disabled="isInforming">
@@ -503,13 +582,69 @@ watch(() => props.isOpen, (isOpen) => {
                     <span class="material-symbols-outlined" :class="{ spin: isDiscovering }">download</span>
                     Ambil Data
                   </button>
-                  <button type="button" @click="saveWanConfig" :disabled="isSavingWan || !wanDraftRows.length">
+                  <button type="button" @click="openAddWanPpp">
+                    <span class="material-symbols-outlined">add_link</span>
+                    Tambah PPP
+                  </button>
+                  <button type="button" @click="saveWanConfig" :disabled="isSavingWan || (!wanDraftRows.length && !isWanPppFormOpen)">
                     <span class="material-symbols-outlined" :class="{ spin: isSavingWan }">save</span>
                     Save WAN
                   </button>
                 </div>
               </div>
-              <div v-if="!selectedWanRows.length" class="empty-wan">WAN PPP belum ditemukan.</div>
+              <div v-if="isWanPppFormOpen" class="wan-add-form">
+                <label>
+                  <span>Slot PPP</span>
+                  <select v-model="wanPppForm.slotPath">
+                    <option value="" disabled>Pilih slot PPP</option>
+                    <option v-for="slot in availableWanPppSlots" :key="slot.path" :value="slot.path">
+                      {{ display(slot.name || slot.path, 'PPP Slot') }}
+                    </option>
+                  </select>
+                </label>
+                <label>
+                  <span>VLAN ID</span>
+                  <input v-model="wanPppForm.vlanId" list="wan-vlan-options" placeholder="200" />
+                </label>
+                <label>
+                  <span>Username PPPoE</span>
+                  <input v-model="wanPppForm.username" placeholder="user_pppoe" />
+                </label>
+                <label>
+                  <span>Password PPPoE</span>
+                  <input v-model="wanPppForm.password" type="password" placeholder="Password PPPoE" />
+                </label>
+                <label>
+                  <span>NAT</span>
+                  <select v-model="wanPppForm.nat">
+                    <option value="1">Enable</option>
+                    <option value="0">Disable</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Status</span>
+                  <select v-model="wanPppForm.enable">
+                    <option value="1">Enable</option>
+                    <option value="0">Disable</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Service</span>
+                  <select v-model="wanPppForm.serviceType">
+                    <option value="INTERNET">INTERNET</option>
+                    <option value="INTERNET_TR069">INTERNET_TR069</option>
+                    <option value="OTHER">OTHER</option>
+                  </select>
+                </label>
+                <datalist id="wan-vlan-options">
+                  <option value="20" />
+                  <option value="100" />
+                  <option value="200" />
+                  <option value="300" />
+                  <option value="500" />
+                </datalist>
+              </div>
+              <div v-if="!selectedWanRows.length && !isWanPppFormOpen" class="empty-wan">WAN PPP belum ditemukan.</div>
               <table v-else class="mini-table">
                 <thead>
                   <tr>
@@ -584,8 +719,7 @@ watch(() => props.isOpen, (isOpen) => {
                 </button>
               </form>
             </section>
-          </template>
-        </aside>
+        </div>
       </div>
     </section>
   </div>
@@ -665,6 +799,7 @@ watch(() => props.isOpen, (isOpen) => {
 .client-inventory-toolbar button,
 .section-split button,
 .section-actions button,
+.back-btn,
 .detail-head-actions button,
 .view-btn,
 .cpe-form button,
@@ -738,21 +873,48 @@ watch(() => props.isOpen, (isOpen) => {
   gap: 8px;
 }
 
-.client-inventory-layout {
+.detail-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.back-btn {
   display: grid;
-  grid-template-columns: minmax(620px, 1fr) 470px;
-  gap: 14px;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(125, 211, 252, 0.24);
+  background: rgba(15, 23, 42, 0.76);
+  color: #bae6fd;
+}
+
+.back-btn span {
+  font-size: 20px;
+}
+
+.client-inventory-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
   height: calc(100% - 120px);
   padding: 0 18px 18px;
+  overflow: auto;
 }
 
 .client-table-wrap,
-.client-detail-side {
+.client-detail-full {
   min-width: 0;
-  overflow: auto;
-  border: 1px solid rgba(148, 163, 184, 0.16);
-  border-radius: 12px;
-  background: rgba(15, 23, 42, 0.52);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.client-table-wrap {
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .client-table {
@@ -809,18 +971,8 @@ watch(() => props.isOpen, (isOpen) => {
   padding: 6px 10px;
 }
 
-.client-detail-side {
-  padding: 14px;
-}
-
-.client-detail-empty {
-  display: grid;
-  height: 100%;
-  place-items: center;
-  align-content: center;
-  gap: 8px;
-  color: #94a3b8;
-  text-align: center;
+.client-detail-full {
+  padding: 4px 0 0;
 }
 
 .detail-section {
@@ -839,7 +991,7 @@ watch(() => props.isOpen, (isOpen) => {
 
 .detail-grid {
   display: grid;
-  grid-template-columns: 88px minmax(0, 1fr);
+  grid-template-columns: max-content minmax(160px, 1fr) max-content minmax(160px, 1fr) max-content minmax(160px, 1fr);
   gap: 7px 10px;
   font-size: 11px;
 }
@@ -892,6 +1044,42 @@ watch(() => props.isOpen, (isOpen) => {
   cursor: not-allowed;
 }
 
+.wan-add-form {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 10px 0 8px;
+  padding: 10px;
+  border: 1px solid rgba(56, 189, 248, 0.18);
+  border-radius: 10px;
+  background: rgba(14, 165, 233, 0.07);
+}
+
+.wan-add-form label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.wan-add-form span {
+  color: #93c5fd;
+  font-size: 9px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.wan-add-form input,
+.wan-add-form select {
+  min-width: 0;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(15, 23, 42, 0.72);
+  color: #e2e8f0;
+  padding: 8px 10px;
+  font-size: 11px;
+}
+
 .empty-wan,
 .empty-cell,
 .client-alert {
@@ -907,7 +1095,7 @@ watch(() => props.isOpen, (isOpen) => {
 .cpe-form,
 .admin-form {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
   margin-top: 12px;
 }
@@ -926,7 +1114,6 @@ watch(() => props.isOpen, (isOpen) => {
 
 .cpe-form button,
 .admin-form button {
-  grid-column: 1 / -1;
   justify-content: center;
 }
 
@@ -979,12 +1166,11 @@ watch(() => props.isOpen, (isOpen) => {
 }
 
 @media (max-width: 980px) {
-  .client-inventory-layout {
+  .detail-grid,
+  .cpe-form,
+  .admin-form,
+  .wan-add-form {
     grid-template-columns: 1fr;
-  }
-
-  .client-detail-side {
-    min-height: 420px;
   }
 }
 </style>

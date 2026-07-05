@@ -411,10 +411,22 @@ export function parseHostsFromGetParameterValues(xmlString: string): any[] {
 
 export function parseParameterValueMap(xmlString: string): Record<string, string> {
   const map: Record<string, string> = {};
-  const regex = /<Name[^>]*>\s*([^<]+?)\s*<\/Name>\s*<Value[^>]*>([\s\S]*?)<\/Value>/g;
+  const structRegex = /<(?:\w+:)?ParameterValueStruct\b[^>]*>([\s\S]*?)<\/(?:\w+:)?ParameterValueStruct>/g;
+  const nameRegex = /<(?:\w+:)?Name\b[^>]*>\s*([^<]+?)\s*<\/(?:\w+:)?Name>/;
+  const valueRegex = /<(?:\w+:)?Value\b[^>]*>([\s\S]*?)<\/(?:\w+:)?Value>/;
   let match;
-  while ((match = regex.exec(xmlString)) !== null) {
-    map[match[1].trim()] = match[2].trim();
+  while ((match = structRegex.exec(xmlString)) !== null) {
+    const block = match[1];
+    const name = block.match(nameRegex)?.[1]?.trim();
+    const value = block.match(valueRegex)?.[1]?.trim() ?? '';
+    if (name) map[name] = value;
+  }
+
+  if (Object.keys(map).length === 0) {
+    const fallbackRegex = /<(?:\w+:)?Name\b[^>]*>\s*([^<]+?)\s*<\/(?:\w+:)?Name>\s*<(?:\w+:)?Value\b[^>]*>([\s\S]*?)<\/(?:\w+:)?Value>/g;
+    while ((match = fallbackRegex.exec(xmlString)) !== null) {
+      map[match[1].trim()] = match[2].trim();
+    }
   }
   return map;
 }

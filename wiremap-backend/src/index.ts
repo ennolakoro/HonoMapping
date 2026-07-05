@@ -1509,8 +1509,19 @@ const toClientInventoryDto = (client: any, activeByUsername: Map<string, any> = 
   }
 }
 
-const getActivePppoeMap = async (c: any, db: any) => {
+let activePppoeCache: { data: Map<string, any>; updatedAt: number } = {
+  data: new Map(),
+  updatedAt: 0
+}
+
+const getActivePppoeMap = async (c: any, db: any, options: { cacheOnly?: boolean } = {}) => {
   const map = new Map<string, any>()
+  const now = Date.now()
+  const cacheFresh = now - activePppoeCache.updatedAt < 15000
+  if (cacheFresh || options.cacheOnly) {
+    return new Map(activePppoeCache.data)
+  }
+
   try {
     const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
     if (!MIKROTIK_IP) return map
@@ -1519,8 +1530,10 @@ const getActivePppoeMap = async (c: any, db: any) => {
       const username = row.name || row.user || row.username
       if (username) map.set(username, row)
     }
+    activePppoeCache = { data: new Map(map), updatedAt: Date.now() }
   } catch (err: any) {
     console.warn('[Clients] Gagal enrich uptime PPPoE:', err.message || err)
+    return new Map(activePppoeCache.data)
   }
   return map
 }
@@ -1551,7 +1564,7 @@ app.get('/api/protected/clients/:id/detail', async (c) => {
     const id = parseInt(c.req.param('id'), 10)
     const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
     if (!rows[0]) return c.json({ error: 'Client tidak ditemukan' }, 404)
-    const activeByUsername = await getActivePppoeMap(c, db)
+    const activeByUsername = await getActivePppoeMap(c, db, { cacheOnly: true })
     return c.json({
       ...toClientInventoryDto(rows[0], activeByUsername),
       rawModemParams: safeParseJson((rows[0] as any).rawModemParamsJson, {}),
