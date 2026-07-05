@@ -105,15 +105,21 @@ const availableWanPppSlots = computed(() =>
 const canAddWanPpp = computed(() => availableWanPppSlots.value.length > 0)
 const hasPppoeActive = computed(() => Boolean(selectedClient.value?.pppoeUsername))
 const hasModemPppObject = computed(() => modemPppWanRows.value.length > 0)
+const needsPppoeLink = computed(() =>
+  selectedClient.value?.clientType === 'PPPOE' && !selectedClient.value?.pppoeUsername
+)
 const wanInfoText = computed(() => {
   if (!selectedClient.value) return ''
   if (hasPppoeActive.value && !hasModemPppObject.value) {
-    return 'PPPoE aktif berasal dari data Mikrotik/DB. Modem belum membuka object WANPPPConnection lewat TR-069, jadi tabel di bawah masih menampilkan WAN modem yang terbaca seperti IPoE/TR069.'
+    return 'Ada PPPoE aktif dari Mikrotik/DB. Tabel WAN di bawah tetap menampilkan object WAN yang modem buka lewat TR-069. Jika yang muncul IPoE, berarti object PPP modem belum terbaca atau modem memakai bridge/IPoE untuk koneksi ini.'
+  }
+  if (needsPppoeLink.value) {
+    return 'Client ini bertipe PPPoE, tetapi username PPP belum ter-link dari sync Mikrotik. Jalankan Sync Router/Mikrotik agar username PPP, IP, dan uptime terisi.'
   }
   if (!selectedWanRows.value.length) {
-    return 'Belum ada object WAN internet yang terbaca dari modem. Klik Ambil Data untuk discovery WAN, atau Tambah PPP untuk mencoba AddObject.'
+    return 'Belum ada object WAN internet yang terbaca dari modem. Klik Ambil Data untuk discovery WAN, atau Tambah PPP untuk mencoba AddObject WANPPPConnection.'
   }
-  return 'Tabel ini adalah WAN yang benar-benar dibaca dari modem via TR-069.'
+  return 'Tabel ini berisi object WAN yang benar-benar dibaca dari modem via TR-069. IPoE berarti WAN modem mode DHCP/static, bukan PPPoE.'
 })
 const selectedWifiRows = computed(() => {
   const configRadios = selectedClient.value?.wifiConfig?.radios
@@ -626,6 +632,15 @@ watch(() => props.isOpen, (isOpen) => {
                 <span class="mono">{{ display(selectedClient.wanIp, '-') }}</span>
                 <small>{{ hasModemPppObject ? 'Object PPP modem terbaca' : 'Sumber: Mikrotik/DB, object PPP modem belum terbaca' }}</small>
               </div>
+              <div v-else-if="needsPppoeLink" class="pppoe-active-card is-warning">
+                <div>
+                  <span class="material-symbols-outlined">link_off</span>
+                  <strong>PPPoE belum ter-link</strong>
+                </div>
+                <span class="mono">Username kosong</span>
+                <span class="mono">{{ display(selectedClient.wanIp || selectedClient.lanIp, '-') }}</span>
+                <small>Jalankan Sync Router/Mikrotik agar client ini cocok dengan PPP active/secret.</small>
+              </div>
               <div v-if="isWanPppFormOpen" class="wan-add-form">
                 <label>
                   <span>Slot PPP</span>
@@ -1136,6 +1151,17 @@ watch(() => props.isOpen, (isOpen) => {
 .pppoe-active-card small {
   color: #a7f3d0;
   min-width: 0;
+}
+
+.pppoe-active-card.is-warning {
+  border-color: rgba(250, 204, 21, 0.24);
+  background: rgba(250, 204, 21, 0.08);
+  color: #fef3c7;
+}
+
+.pppoe-active-card.is-warning > div,
+.pppoe-active-card.is-warning small {
+  color: #fde68a;
 }
 
 .wan-add-form label {
