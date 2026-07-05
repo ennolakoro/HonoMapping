@@ -74,6 +74,12 @@ const cleanWanValue = (value) => {
   return text.includes('<ParameterValueStruct') || text.includes('</') ? '' : text
 }
 
+const inferVlanFromWanName = (wan) => {
+  const text = `${wan?.name || ''} ${wan?.path || ''}`
+  const match = text.match(/(?:VID|VLAN|_V)(?:_|-)?(\d{1,4})/i)
+  return match ? match[1] : ''
+}
+
 const isInternetWan = (wan) => {
   const haystack = [
     wan?.type,
@@ -88,6 +94,7 @@ const isInternetWan = (wan) => {
 
 const rawWanRows = computed(() => Array.isArray(selectedClient.value?.wanConfig) ? selectedClient.value.wanConfig : [])
 const selectedWanRows = computed(() => rawWanRows.value.filter(isInternetWan))
+const modemPppWanRows = computed(() => rawWanRows.value.filter(wan => String(wan?.type || '').toLowerCase() === 'pppoe' || wan?.username))
 const availableWanPppSlots = computed(() =>
   rawWanRows.value.filter(wan =>
     String(wan?.type || '').toLowerCase() === 'pppoe' ||
@@ -96,6 +103,18 @@ const availableWanPppSlots = computed(() =>
   )
 )
 const canAddWanPpp = computed(() => availableWanPppSlots.value.length > 0)
+const hasPppoeActive = computed(() => Boolean(selectedClient.value?.pppoeUsername))
+const hasModemPppObject = computed(() => modemPppWanRows.value.length > 0)
+const wanInfoText = computed(() => {
+  if (!selectedClient.value) return ''
+  if (hasPppoeActive.value && !hasModemPppObject.value) {
+    return 'PPPoE aktif berasal dari data Mikrotik/DB. Modem belum membuka object WANPPPConnection lewat TR-069, jadi tabel di bawah masih menampilkan WAN modem yang terbaca seperti IPoE/TR069.'
+  }
+  if (!selectedWanRows.value.length) {
+    return 'Belum ada object WAN internet yang terbaca dari modem. Klik Ambil Data untuk discovery WAN, atau Tambah PPP untuk mencoba AddObject.'
+  }
+  return 'Tabel ini adalah WAN yang benar-benar dibaca dari modem via TR-069.'
+})
 const selectedWifiRows = computed(() => {
   const configRadios = selectedClient.value?.wifiConfig?.radios
   if (Array.isArray(configRadios) && configRadios.length) return configRadios
@@ -135,7 +154,7 @@ const syncFormsFromClient = () => {
     fieldPaths: wan.fieldPaths || {},
     type: wan.type || '',
     name: cleanWanValue(wan.name),
-    vlanId: cleanWanValue(wan.vlanId),
+    vlanId: cleanWanValue(wan.vlanId) || inferVlanFromWanName(wan),
     username: cleanWanValue(wan.username),
     password: wan.password || '',
     nat: cleanWanValue(wan.nat),
@@ -596,7 +615,16 @@ watch(() => props.isOpen, (isOpen) => {
                 </div>
               </div>
               <div v-if="!canAddWanPpp && !isWanPppFormOpen" class="wan-hint">
-                Modem menampilkan WAN existing. `IPoE` berarti koneksi internet mode DHCP/static, bukan PPP yang baru dibuat. Klik Tambah PPP untuk mencoba membuat object PPP baru via TR-069 AddObject.
+                {{ wanInfoText }}
+              </div>
+              <div v-if="hasPppoeActive" class="pppoe-active-card">
+                <div>
+                  <span class="material-symbols-outlined">vpn_key</span>
+                  <strong>PPPoE Active</strong>
+                </div>
+                <span class="mono">{{ selectedClient.pppoeUsername }}</span>
+                <span class="mono">{{ display(selectedClient.wanIp, '-') }}</span>
+                <small>{{ hasModemPppObject ? 'Object PPP modem terbaca' : 'Sumber: Mikrotik/DB, object PPP modem belum terbaca' }}</small>
               </div>
               <div v-if="isWanPppFormOpen" class="wan-add-form">
                 <label>
@@ -650,7 +678,9 @@ watch(() => props.isOpen, (isOpen) => {
                   <option value="500" />
                 </datalist>
               </div>
-              <div v-if="!selectedWanRows.length && !isWanPppFormOpen" class="empty-wan">WAN internet belum ditemukan.</div>
+              <div v-if="!selectedWanRows.length && !isWanPppFormOpen" class="empty-wan">
+                {{ hasPppoeActive ? 'WAN PPP modem belum terbaca. PPP aktif tetap ada dari Mikrotik/DB.' : 'WAN internet belum ditemukan.' }}
+              </div>
               <table v-else-if="selectedWanRows.length" class="mini-table">
                 <thead>
                   <tr>
@@ -1078,6 +1108,36 @@ watch(() => props.isOpen, (isOpen) => {
   line-height: 1.5;
 }
 
+.pppoe-active-card {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) minmax(110px, 0.8fr) minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 10px;
+  margin: 10px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(52, 211, 153, 0.2);
+  border-radius: 10px;
+  background: rgba(16, 185, 129, 0.08);
+  color: #d1fae5;
+  font-size: 11px;
+}
+
+.pppoe-active-card > div {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #6ee7b7;
+}
+
+.pppoe-active-card .material-symbols-outlined {
+  font-size: 16px;
+}
+
+.pppoe-active-card small {
+  color: #a7f3d0;
+  min-width: 0;
+}
+
 .wan-add-form label {
   display: grid;
   gap: 4px;
@@ -1192,7 +1252,8 @@ watch(() => props.isOpen, (isOpen) => {
   .detail-grid,
   .cpe-form,
   .admin-form,
-  .wan-add-form {
+  .wan-add-form,
+  .pppoe-active-card {
     grid-template-columns: 1fr;
   }
 }
