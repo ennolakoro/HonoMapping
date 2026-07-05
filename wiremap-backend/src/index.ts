@@ -126,7 +126,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { buildParameterRequestList, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames } from './cwmp'
+import { buildParameterRequestList, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -316,7 +316,10 @@ interface PendingConfig {
   clientId: number;
   modemIp: string;
   params: { name: string; value: string; type: string }[];
-  status: 'pending' | 'sending' | 'success' | 'failed';
+  status: 'pending' | 'adding' | 'sending' | 'success' | 'failed';
+  operation?: 'set' | 'add-wan-ppp';
+  addObjectCandidates?: string[];
+  addObjectPayload?: any;
   error?: string;
   updatedAt: number;
 }
@@ -381,6 +384,45 @@ const requestNextWanNameRoot = (session: CwmpSession) => {
   if (!nextRoot) return null
   session.updatedAt = Date.now()
   return createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, nextRoot, false)
+}
+
+const getWanPppAddObjectCandidates = (profile?: string | null) => {
+  const tr098: string[] = []
+  for (let wanDevice = 1; wanDevice <= 2; wanDevice++) {
+    for (let wanConn = 1; wanConn <= 4; wanConn++) {
+      tr098.push(`InternetGatewayDevice.WANDevice.${wanDevice}.WANConnectionDevice.${wanConn}.WANPPPConnection.`)
+    }
+  }
+  const tr181 = [
+    'Device.PPP.Interface.',
+  ]
+  return profile === 'Device' ? [...tr181, ...tr098] : [...tr098, ...tr181]
+}
+
+const buildWanPppSetParams = (objectPath: string, instanceNumber: string, payload: any) => {
+  const base = `${objectPath}${instanceNumber}.`
+  const params: { name: string; value: string; type: string }[] = []
+  const push = (field: string, value: any, type = 'string') => {
+    const text = String(value ?? '').trim()
+    if (text) params.push({ name: `${base}${field}`, value: text, type })
+  }
+
+  const isTr181 = objectPath.startsWith('Device.')
+  push('Name', payload.connectionName || `INTERNET_VID_${payload.vlanId || 'PPP'}`)
+  push('Username', payload.username)
+  push('Password', payload.password)
+  push('Enable', payload.enable ?? '1', 'boolean')
+
+  if (!isTr181) {
+    push('NATEnabled', payload.nat ?? '1', 'boolean')
+    push('ServiceList', payload.serviceType || 'INTERNET')
+    push('ConnectionType', 'IP_Routed')
+    push('X_HW_VLAN', payload.vlanId, 'unsignedInt')
+    push('X_ZTE-COM_VLANID', payload.vlanId, 'unsignedInt')
+    push('VLANID', payload.vlanId, 'unsignedInt')
+  }
+
+  return params
 }
 
 const markPendingConfigFailed = (clientId: number | null | undefined, error: string) => {
@@ -858,6 +900,42 @@ const cwmpHandler = async (c: any) => {
       cwmpSessions.set(sessionKey, session)
 
       if (clientId && pendingConfig && pendingConfig.status === 'pending') {
+        if (pendingConfig.operation === 'add-wan-ppp') {
+          const candidate = pendingConfig.addObjectCandidates?.shift()
+          if (!candidate) {
+            markPendingConfigFailed(clientId, 'Tidak ada kandidat path AddObject WAN PPP yang tersedia untuk modem ini.')
+            return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+          }
+          pendingConfig.status = 'adding'
+          pendingConfig.addObjectPayload = {
+            ...(pendingConfig.addObjectPayload || {}),
+            objectPath: candidate
+          }
+          pendingConfig.updatedAt = Date.now()
+          pendingConfigs.set(clientId, pendingConfig)
+
+          const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+          const prog = getFirstProgress(progressKeys)
+          if (prog) {
+            setProgressForKeys(progressKeys, {
+              ...prog,
+              progress: 45,
+              status: 'fetching',
+              updatedAt: Date.now()
+            })
+          }
+
+          console.log(`[WAN ADD] Mencoba AddObject ${candidate} untuk clientId=${clientId}`)
+          const responseXml = createAddObject(session.currentCwmpId, session.currentCwmpNamespace, candidate)
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
         pendingConfig.status = 'sending'; // Tandai sebagai 'sedang dikirim', bukan 'success' dulu
         pendingConfigs.set(clientId, pendingConfig);
 
@@ -921,7 +999,45 @@ const cwmpHandler = async (c: any) => {
         }
       })
     }
-    
+     
+    if (bodyText.includes('AddObjectResponse')) {
+      const clientId = session.currentTriggeredClientId
+      const pendingConfig = clientId ? pendingConfigs.get(clientId) : null
+      const addResult = parseAddObjectResponse(bodyText)
+      const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+      const prog = getFirstProgress(progressKeys)
+
+      if (!clientId || !pendingConfig || pendingConfig.operation !== 'add-wan-ppp' || !addResult.instanceNumber) {
+        const message = 'AddObject WAN PPP tidak mengembalikan InstanceNumber.'
+        markPendingConfigFailed(clientId, message)
+        if (prog) {
+          setProgressForKeys(progressKeys, { ...prog, progress: 100, status: 'failed', error: message, updatedAt: Date.now() })
+        }
+        cwmpSessions.delete(sessionKey)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+      }
+
+      const objectPath = pendingConfig.addObjectPayload?.objectPath || ''
+      pendingConfig.params = buildWanPppSetParams(objectPath, addResult.instanceNumber, pendingConfig.addObjectPayload || {})
+      pendingConfig.status = 'sending'
+      pendingConfig.updatedAt = Date.now()
+      pendingConfigs.set(clientId, pendingConfig)
+
+      if (prog) {
+        setProgressForKeys(progressKeys, { ...prog, progress: 65, status: 'fetching', updatedAt: Date.now() })
+      }
+
+      console.log(`[WAN ADD] AddObject berhasil path=${objectPath} instance=${addResult.instanceNumber}. Mengirim SetParameterValues (${pendingConfig.params.length} params).`)
+      const responseXml = createSetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, pendingConfig.params)
+      return new Response(responseXml, {
+        headers: {
+          'Content-Type': 'text/xml',
+          'Server': 'Hono-MiniACS',
+          'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+        }
+      })
+    }
+
     if (bodyText.includes('SetParameterValuesResponse')) {
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
@@ -1141,6 +1257,47 @@ const cwmpHandler = async (c: any) => {
     if (bodyText.includes('Fault') || bodyText.includes('fault')) {
       const faultCode = (bodyText.match(/<FaultCode>(\d+)<\/FaultCode>/) || [])[1] || '?';
 
+      if (session.currentTriggeredClientId) {
+        const pendingConfig = pendingConfigs.get(session.currentTriggeredClientId)
+        if (pendingConfig?.operation === 'add-wan-ppp' && pendingConfig.status === 'adding') {
+          const nextCandidate = pendingConfig.addObjectCandidates?.shift()
+          if (nextCandidate) {
+            pendingConfig.addObjectPayload = {
+              ...(pendingConfig.addObjectPayload || {}),
+              objectPath: nextCandidate
+            }
+            pendingConfig.updatedAt = Date.now()
+            pendingConfigs.set(session.currentTriggeredClientId, pendingConfig)
+            console.warn(`[WAN ADD] AddObject fault ${faultCode}, mencoba kandidat berikutnya: ${nextCandidate}`)
+            const responseXml = createAddObject(session.currentCwmpId, session.currentCwmpNamespace, nextCandidate)
+            return new Response(responseXml, {
+              headers: {
+                'Content-Type': 'text/xml',
+                'Server': 'Hono-MiniACS',
+                'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+              }
+            })
+          }
+
+          const faultString = (bodyText.match(/<FaultString>([^<]+)<\/FaultString>/) || [])[1] || ''
+          const faultMessage = `Semua kandidat AddObject WAN PPP gagal. Fault ${faultCode}${faultString ? `: ${faultString}` : ''}`
+          markPendingConfigFailed(session.currentTriggeredClientId, faultMessage)
+          const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+          const prog = getFirstProgress(progressKeys)
+          if (prog) {
+            setProgressForKeys(progressKeys, {
+              ...prog,
+              progress: 100,
+              status: 'failed',
+              error: faultMessage,
+              updatedAt: Date.now()
+            })
+          }
+          cwmpSessions.delete(sessionKey)
+          return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+        }
+      }
+
       if (faultCode === '9005' && session.stage === 'wan_names') {
         console.warn(`[CWMP] Root WAN tidak didukung oleh ${session.currentModemSN}, mencoba root berikutnya.`)
         const nextXml = requestNextWanNameRoot(session)
@@ -1265,11 +1422,12 @@ app.get('/api/protected/modem/sync-status', async (c) => {
       pendingConfig.status === 'success' ? 100 :
       pendingConfig.status === 'failed' ? 100 :
       pendingConfig.status === 'sending' ? 70 :
+      pendingConfig.status === 'adding' ? 45 :
       10
     const status =
       pendingConfig.status === 'success' ? 'success' :
       pendingConfig.status === 'failed' ? 'failed' :
-      pendingConfig.status === 'sending' ? 'fetching' :
+      pendingConfig.status === 'sending' || pendingConfig.status === 'adding' ? 'fetching' :
       'triggered'
     const item = {
       id: clientId,
@@ -1656,6 +1814,82 @@ app.patch('/api/protected/clients/:id/admin-config', async (c) => {
     return c.json({ success: true })
   } catch (err: any) {
     return c.json({ error: 'Gagal menyimpan admin config', details: err.message }, 500)
+  }
+})
+
+app.post('/api/protected/clients/:id/create-wan-ppp', async (c) => {
+  try {
+    const db = getDb(c.env)
+    await ensureClientInventoryColumns(db)
+    const id = parseInt(c.req.param('id'), 10)
+    const body = await c.req.json()
+    const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
+    const client = rows[0] as any
+    if (!client) return c.json({ error: 'Client tidak ditemukan' }, 404)
+
+    const modemIp = getClientTriggerIpFromRow(client)
+    if (!modemIp) return c.json({ error: 'IP management modem belum tersedia' }, 400)
+
+    const payload = {
+      vlanId: body.vlanId,
+      username: body.username || client.pppoeUsername,
+      password: body.password,
+      nat: body.nat ?? '1',
+      enable: body.enable ?? '1',
+      serviceType: body.serviceType || 'INTERNET',
+      connectionName: body.connectionName || `INTERNET_VID_${body.vlanId || 'PPP'}`
+    }
+
+    if (!payload.username || !payload.password || !payload.vlanId) {
+      return c.json({ error: 'VLAN ID, username PPPoE, dan password wajib diisi' }, 400)
+    }
+
+    const candidates = getWanPppAddObjectCandidates(client.modemProfile)
+    pendingConfigs.set(id, {
+      clientId: id,
+      modemIp,
+      params: [],
+      status: 'pending',
+      operation: 'add-wan-ppp',
+      addObjectCandidates: candidates,
+      addObjectPayload: payload,
+      updatedAt: Date.now()
+    })
+
+    const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
+    const connectionRequestUrl = client.connectionRequestUrl || modemConnectionUrls.get(modemIp) || null
+    const progressKeys = [modemIp, String(id)]
+    for (const key of progressKeys) {
+      syncProgress.set(key, {
+        id,
+        username: client.name,
+        progress: 10,
+        status: 'triggered',
+        mode: 'config',
+        updatedAt: Date.now()
+      })
+    }
+
+    let triggered = false
+    let triggerError: string | null = null
+    try {
+      triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+    } catch (err: any) {
+      triggerError = err.message || 'Trigger modem timeout'
+      console.warn(`[WAN ADD] Trigger timeout/gagal untuk ${client.name} (${modemIp}), tetap menunggu Inform berikutnya:`, triggerError)
+    }
+
+    return c.json({
+      success: true,
+      queued: !triggered,
+      triggered,
+      triggerError,
+      message: triggered
+        ? 'Create WAN PPP masuk antrian dan modem diminta Inform.'
+        : 'Create WAN PPP masuk antrian. Sistem menunggu Inform berikutnya dari modem.'
+    })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal membuat WAN PPP', details: err.message }, 500)
   }
 })
 

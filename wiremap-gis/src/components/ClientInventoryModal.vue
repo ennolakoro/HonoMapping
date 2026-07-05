@@ -95,6 +95,7 @@ const availableWanPppSlots = computed(() =>
     wan?.fieldPaths?.password
   )
 )
+const canAddWanPpp = computed(() => availableWanPppSlots.value.length > 0)
 const selectedWifiRows = computed(() => {
   const configRadios = selectedClient.value?.wifiConfig?.radios
   if (Array.isArray(configRadios) && configRadios.length) return configRadios
@@ -399,22 +400,20 @@ const saveWanConfig = async () => {
 
   if (isWanPppFormOpen.value) {
     const slot = availableWanPppSlots.value.find(wan => wan.path === wanPppForm.value.slotPath)
-    if (!slot) {
-      actionMessage.value = 'Slot PPP belum ditemukan. Klik Ambil Data dulu, lalu pilih slot PPP modem.'
-      actionState.value = 'failed'
-      actionProgress.value = 100
-      return
+    if (slot) {
+      const paths = slot.fieldPaths || {}
+      addParamIfPath(params, paths.vlanId, wanPppForm.value.vlanId, 'unsignedInt')
+      addParamIfPath(params, paths.username, wanPppForm.value.username)
+      addParamIfPath(params, paths.password, wanPppForm.value.password)
+      addParamIfPath(params, paths.nat, wanPppForm.value.nat, 'boolean')
+      addParamIfPath(params, paths.enable, wanPppForm.value.enable, 'boolean')
+      addParamIfPath(params, paths.serviceType, wanPppForm.value.serviceType)
     }
-    const paths = slot.fieldPaths || {}
-    addParamIfPath(params, paths.vlanId, wanPppForm.value.vlanId, 'unsignedInt')
-    addParamIfPath(params, paths.username, wanPppForm.value.username)
-    addParamIfPath(params, paths.password, wanPppForm.value.password)
-    addParamIfPath(params, paths.nat, wanPppForm.value.nat, 'boolean')
-    addParamIfPath(params, paths.enable, wanPppForm.value.enable, 'boolean')
-    addParamIfPath(params, paths.serviceType, wanPppForm.value.serviceType)
   }
 
-  if (!params.length) {
+  const shouldCreateNewPpp = isWanPppFormOpen.value && !availableWanPppSlots.value.some(wan => wan.path === wanPppForm.value.slotPath)
+
+  if (!params.length && !shouldCreateNewPpp) {
     actionMessage.value = 'Tidak ada perubahan WAN untuk disimpan'
     actionState.value = 'idle'
     actionProgress.value = 0
@@ -426,7 +425,11 @@ const saveWanConfig = async () => {
   actionProgress.value = 10
   actionState.value = 'triggered'
   try {
-    await api.pushModemConfig(client.triggerIp, { deviceId: client.pseudoId, params })
+    if (shouldCreateNewPpp) {
+      await api.createClientWanPpp(client.id, wanPppForm.value)
+    } else {
+      await api.pushModemConfig(client.triggerIp, { deviceId: client.pseudoId, params })
+    }
     await waitForClientSync(client, 'Menunggu modem menyimpan WAN config...')
     actionMessage.value = 'WAN config berhasil disimpan'
   } catch (err) {
@@ -582,7 +585,7 @@ watch(() => props.isOpen, (isOpen) => {
                     <span class="material-symbols-outlined" :class="{ spin: isDiscovering }">download</span>
                     Ambil Data
                   </button>
-                  <button type="button" @click="openAddWanPpp">
+                  <button type="button" @click="openAddWanPpp" :class="{ muted: !canAddWanPpp }">
                     <span class="material-symbols-outlined">add_link</span>
                     Tambah PPP
                   </button>
@@ -592,11 +595,14 @@ watch(() => props.isOpen, (isOpen) => {
                   </button>
                 </div>
               </div>
+              <div v-if="!canAddWanPpp && !isWanPppFormOpen" class="wan-hint">
+                Modem menampilkan WAN existing. `IPoE` berarti koneksi internet mode DHCP/static, bukan PPP yang baru dibuat. Klik Tambah PPP untuk mencoba membuat object PPP baru via TR-069 AddObject.
+              </div>
               <div v-if="isWanPppFormOpen" class="wan-add-form">
                 <label>
                   <span>Slot PPP</span>
                   <select v-model="wanPppForm.slotPath">
-                    <option value="" disabled>Pilih slot PPP</option>
+                    <option value="">Buat object PPP baru</option>
                     <option v-for="slot in availableWanPppSlots" :key="slot.path" :value="slot.path">
                       {{ display(slot.name || slot.path, 'PPP Slot') }}
                     </option>
@@ -644,8 +650,8 @@ watch(() => props.isOpen, (isOpen) => {
                   <option value="500" />
                 </datalist>
               </div>
-              <div v-if="!selectedWanRows.length && !isWanPppFormOpen" class="empty-wan">WAN PPP belum ditemukan.</div>
-              <table v-else class="mini-table">
+              <div v-if="!selectedWanRows.length && !isWanPppFormOpen" class="empty-wan">WAN internet belum ditemukan.</div>
+              <table v-else-if="selectedWanRows.length" class="mini-table">
                 <thead>
                   <tr>
                     <th>Type</th>
@@ -867,6 +873,12 @@ watch(() => props.isOpen, (isOpen) => {
   justify-content: flex-end;
 }
 
+.section-actions button.muted {
+  background: rgba(15, 23, 42, 0.75);
+  color: #93c5fd;
+  border: 1px solid rgba(125, 211, 252, 0.18);
+}
+
 .detail-head-actions {
   display: flex;
   align-items: center;
@@ -1053,6 +1065,17 @@ watch(() => props.isOpen, (isOpen) => {
   border: 1px solid rgba(56, 189, 248, 0.18);
   border-radius: 10px;
   background: rgba(14, 165, 233, 0.07);
+}
+
+.wan-hint {
+  margin: 10px 0 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(250, 204, 21, 0.2);
+  border-radius: 10px;
+  background: rgba(250, 204, 21, 0.08);
+  color: #fde68a;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .wan-add-form label {

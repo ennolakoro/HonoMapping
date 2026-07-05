@@ -721,3 +721,31 @@ ${paramsXml}
   </soap-env:Body>
 </soap-env:Envelope>`;
 }
+
+export function createAddObject(
+  cwmpId: string = '99996',
+  cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0',
+  objectName: string
+) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<soap-env:Envelope xmlns:soap-env="http://schemas.xmlsoap.org/soap/envelope/" xmlns:cwmp="${cwmpNamespace}">
+  <soap-env:Header>
+    <cwmp:ID soap-env:mustUnderstand="1">${cwmpId}</cwmp:ID>
+  </soap-env:Header>
+  <soap-env:Body>
+    <cwmp:AddObject>
+      <ObjectName>${objectName}</ObjectName>
+      <ParameterKey>wiremap-add-wan-ppp</ParameterKey>
+    </cwmp:AddObject>
+  </soap-env:Body>
+</soap-env:Envelope>`;
+}
+
+export function parseAddObjectResponse(xmlString: string) {
+  const instanceMatch = xmlString.match(/<InstanceNumber[^>]*>(\d+)<\/InstanceNumber>/i);
+  const statusMatch = xmlString.match(/<Status[^>]*>(\d+)<\/Status>/i);
+  return {
+    instanceNumber: instanceMatch ? instanceMatch[1] : null,
+    status: statusMatch ? statusMatch[1] : null,
+  };
+}

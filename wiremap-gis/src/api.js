@@ -230,6 +230,21 @@ export const api = {
     return data;
   },
 
+  async createClientWanPpp(id, payload) {
+    const res = await fetch(`${API_URL}/protected/clients/${id}/create-wan-ppp`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 404) throw new Error(CLIENT_ENDPOINT_MISSING);
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal membuat WAN PPP');
+    return data;
+  },
+
   async getSettings() {
     const res = await fetch(`${API_URL}/protected/settings`, {
       headers: {
