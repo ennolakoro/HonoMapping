@@ -718,40 +718,10 @@ const handlePushConfig = async () => {
           </form>
         </section>
 
-        <section v-if="device?.type === 'CLIENT' && device?.pppoeUsername" class="info-card">
-          <div class="card-heading split">
-            <div>
-              <span class="material-symbols-outlined">vpn_key</span>
-              <h3>PPPoE Aktif</h3>
-            </div>
-            <strong :class="{ 'is-online': pppoeCredential?.isActive }">
-              {{ pppoeCredential?.isActive ? 'Active' : 'Offline' }}
-            </strong>
-          </div>
-          <div class="info-list">
-            <div class="info-row"><span>User</span><strong class="mono">{{ displayValue(pppoeCredential?.username || device.pppoeUsername) }}</strong></div>
-            <div class="info-row"><span>Password</span><strong class="mono" :title="pppoeCredential?.password">{{ passwordValue(pppoeCredential?.password) }}</strong></div>
-            <div class="info-row"><span>IP Aktif</span><strong class="mono">{{ displayValue(pppoeCredential?.address || device.wanIp || device.lanIp) }}</strong></div>
-            <div class="info-row"><span>Uptime</span><strong>{{ displayValue(pppoeCredential?.uptime) }}</strong></div>
-          </div>
-          <div v-if="pppoeCredentialStatus || pppoeCredential?.secretError || pppoeCredential?.activeError" class="credential-note">
-            {{ pppoeCredentialStatus || pppoeCredential?.secretError || pppoeCredential?.activeError }}
-          </div>
-        </section>
+
 
         <template v-if="device?.type === 'CLIENT'">
-          <section class="info-card">
-            <div class="card-heading">
-              <span class="material-symbols-outlined">wifi</span>
-              <h3>Wi-Fi</h3>
-            </div>
-            <div class="info-list">
-              <div class="info-row"><span>SSID 2.4G</span><strong :title="device.wifiSsid">{{ displayValue(device.wifiSsid) }}</strong></div>
-              <div class="info-row"><span>Password 2.4G</span><strong :title="device.wifiPassword">{{ passwordValue(device.wifiPassword) }}</strong></div>
-              <div class="info-row"><span>SSID 5G</span><strong :title="device.wifiSsid5g">{{ displayValue(device.wifiSsid5g) }}</strong></div>
-              <div class="info-row"><span>Password 5G</span><strong :title="device.wifiPassword5g">{{ passwordValue(device.wifiPassword5g) }}</strong></div>
-            </div>
-          </section>
+
 
           <section class="info-card">
             <div class="card-heading">

@@ -924,6 +924,11 @@ const cwmpHandler = async (c: any) => {
       if (existingClientRow?.parameterListJson) {
         try {
           parameterList = JSON.parse(existingClientRow.parameterListJson)
+          const excludeRegexes = [
+            /UserInterface\..*Password$/i,
+            /Users\.User\.\d+\.Password$/i
+          ]
+          parameterList = parameterList.filter(name => !excludeRegexes.some(r => r.test(name)))
         } catch {
           parameterList = []
         }
