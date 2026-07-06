@@ -103,37 +103,20 @@ const buildDeviceWanParams = () => {
 }
 
 const adminConfigParams = [
-  'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName',
-  'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.UserName',
-  'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_ZTE-COM_UserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_FH_UserInfo.1.UserName',
-  'InternetGatewayDevice.UserInterface.X_ALU-COM_UserInfo.1.Username',
-  'Device.Users.User.1.Username',
+  'InternetGatewayDevice.UserInterface.',
+  'Device.Users.',
 ]
 
 export const igdBaseParams = [
-  'InternetGatewayDevice.DeviceInfo.Manufacturer',
-  'InternetGatewayDevice.DeviceInfo.ModelName',
-  'InternetGatewayDevice.DeviceInfo.ProductClass',
-  'InternetGatewayDevice.DeviceInfo.HardwareVersion',
-  'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
+  'InternetGatewayDevice.DeviceInfo.',
+  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.',
+  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.',
 ]
 
 export const deviceBaseParams = [
-  'Device.DeviceInfo.Manufacturer',
-  'Device.DeviceInfo.ModelName',
-  'Device.DeviceInfo.ProductClass',
-  'Device.DeviceInfo.HardwareVersion',
-  'Device.DeviceInfo.SoftwareVersion',
-  'Device.WiFi.SSID.1.SSID',
-  'Device.Ethernet.Interface.1.MACAddress',
-  'Device.Ethernet.Interface.1.Status',
+  'Device.DeviceInfo.',
+  'Device.WiFi.SSID.1.',
+  'Device.Ethernet.Interface.1.',
 ]
 
 const opticalProfiles: Record<string, string[]> = {
