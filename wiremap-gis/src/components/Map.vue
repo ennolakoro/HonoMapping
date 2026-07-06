@@ -11,6 +11,7 @@ const mapContainer = ref(null)
 let map = null
 let deviceLayer = null
 let polylineLayer = null
+let hasAutoFittedDevices = false
 
 const isClientModalOpen = ref(false)
 const isLegendOpen = ref(false)
@@ -139,6 +140,30 @@ const refreshMapAndLoadDevices = async () => {
   if (!map) return
   map.invalidateSize({ animate: false })
   await loadDevices()
+}
+
+const fitMapToDevicesOnce = (devices) => {
+  if (!map || hasAutoFittedDevices) return
+  const points = devices
+    .filter(hasCoords)
+    .map(device => [Number(device.lat), Number(device.lng)])
+
+  if (!points.length) return
+  hasAutoFittedDevices = true
+
+  setTimeout(() => {
+    if (!map) return
+    map.invalidateSize({ animate: false })
+    if (points.length === 1) {
+      map.setView(points[0], 19)
+      return
+    }
+    map.fitBounds(L.latLngBounds(points), {
+      padding: [64, 64],
+      maxZoom: 19,
+      animate: false
+    })
+  }, 120)
 }
 
 const handleDocClickForSearch = (e) => {
@@ -933,30 +958,16 @@ const deleteDevice = async (device) => {
 }
 
 const loadDevices = async () => {
-  console.log('[DEBUG FRONTEND] Memulai pemanggilan api.getDevices() ke backend...');
   try {
     const devices = await api.getDevices()
-    console.log('[DEBUG FRONTEND] Respons dari api.getDevices() diterima:', devices);
     
     if (!Array.isArray(devices)) {
-      console.error('[DEBUG FRONTEND] Data dari server bukan array!', devices);
       throw new Error('Data perangkat yang diterima dari server tidak valid (bukan array).');
     }
     
-    console.log(`[DEBUG FRONTEND] Berhasil memuat ${devices.length} perangkat dari server.`);
-    
     // Deteksi transisi status online -> offline (atau pemulihan) untuk log gangguan & alarm suara
     const isFirstLoad = Object.keys(previousOnlineStatuses).length === 0
-    devices.forEach((device, index) => {
-      console.log(`[DEBUG FRONTEND] Perangkat #${index} ->`, {
-        id: device.id,
-        name: device.name,
-        type: device.type,
-        lat: device.lat,
-        lng: device.lng,
-        hasCoords: hasCoords(device)
-      });
-
+    devices.forEach((device) => {
       if (device.type === 'CLIENT') {
         const currentOnline = device.isOnline
         const prevOnline = previousOnlineStatuses[device.id]
@@ -1236,6 +1247,8 @@ const loadDevices = async () => {
         }
       }
     })
+
+    fitMapToDevicesOnce(devices)
   } catch (err) {
     console.error("Gagal menarik data topology:", err)
     if (Object.keys(previousOnlineStatuses).length === 0) {

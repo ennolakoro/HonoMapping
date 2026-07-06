@@ -2006,7 +2006,7 @@ app.get('/api/protected/devices', async (c) => {
         wifiPassword5g: client.wifiPassword5g,
         lanStatus: client.lanStatus,
         associatedDevices: client.associatedDevices,
-        connectedHosts: client.connectedHosts ? JSON.parse(client.connectedHosts) : [],
+        connectedHosts: safeParseJson(client.connectedHosts, []),
         brand: client.brand || inferredModem.brand || null,
         modelName: client.modelName || inferredModem.modelName || null,
         hardwareVersion: client.hardwareVersion,
