@@ -23,7 +23,7 @@ type Variables = {
 const app = new Hono<{ Bindings: Bindings; Variables: Variables }>()
 
 let lastGarbageCleanupAt = 0
-const GARBAGE_CLEANUP_INTERVAL_MS = 60000
+const GARBAGE_CLEANUP_INTERVAL_MS = 600000
 let clientInventoryColumnsReady = false
 
 
