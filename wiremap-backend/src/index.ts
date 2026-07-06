@@ -2841,9 +2841,14 @@ app.post('/api/protected/settings', async (c) => {
       String(body.MIKROTIK_USER || '').trim() === '' &&
       String(body.MIKROTIK_PASS || '') === ''
 
-    if (!isDeletingSettings) {
-      await testRouterApiConnection(c, body)
+    if (isDeletingSettings) {
+      await db.delete(settings)
+      await db.delete(clients)
+      await db.delete(devices)
+      return c.json({ success: true, message: 'Konfigurasi Mikrotik, data peta, dan daftar antrean (queue) berhasil dihapus' })
     }
+
+    await testRouterApiConnection(c, body)
 
     const keys = ['MIKROTIK_IP', 'MIKROTIK_USER', 'MIKROTIK_PASS', 'MIKROTIK_BRIDGE_URL']
     for (const key of keys) {
@@ -2857,7 +2862,7 @@ app.post('/api/protected/settings', async (c) => {
         })
       }
     }
-    return c.json({ success: true, message: isDeletingSettings ? 'Konfigurasi Mikrotik berhasil dihapus' : 'Koneksi berhasil dan konfigurasi Mikrotik disimpan' })
+    return c.json({ success: true, message: 'Koneksi berhasil dan konfigurasi Mikrotik disimpan' })
   } catch (e: any) {
     return c.json({ error: 'Gagal menyimpan konfigurasi', details: e.message }, 502)
   }
