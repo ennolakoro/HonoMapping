@@ -130,20 +130,8 @@ export const igdBaseParams = [
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDeviceNumberOfEntries',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.TotalAssociations',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.AssociatedDeviceNumberOfEntries',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MaxBitRate',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.Status',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.2.MaxBitRate',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.Status',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.MaxBitRate',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
-  'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate',
 ]
 
 const deviceBaseParams = [
@@ -153,14 +141,9 @@ const deviceBaseParams = [
   'Device.DeviceInfo.HardwareVersion',
   'Device.DeviceInfo.SoftwareVersion',
   'Device.WiFi.SSID.1.SSID',
-  'Device.WiFi.SSID.5.SSID',
   'Device.WiFi.AccessPoint.1.AssociatedDeviceNumberOfEntries',
-  'Device.WiFi.AccessPoint.5.AssociatedDeviceNumberOfEntries',
   'Device.Ethernet.Interface.1.MACAddress',
   'Device.Ethernet.Interface.1.Status',
-  'Device.Ethernet.Interface.2.Status',
-  'Device.Ethernet.Interface.3.Status',
-  'Device.Ethernet.Interface.4.Status',
 ]
 
 const opticalProfiles: Record<string, string[]> = {
@@ -249,9 +232,7 @@ export function filterDynamicParameters(names: string[]): string[] {
     // Admin Credential
     /UserInterface\..*UserName$/i,
     /UserInterface\..*Username$/i,
-    /UserInterface\..*Password$/i,
     /Users\.User\.\d+\.Username$/i,
-    /Users\.User\.\d+\.Password$/i,
   ];
 
   const filtered = names.filter(name => {
