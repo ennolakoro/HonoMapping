@@ -196,6 +196,43 @@ const updateMapDataStatus = (devices, error = '') => {
   }
 }
 
+const addMarkerToLayer = (device, sourceDevices = allDevicesData.value) => {
+  if (!map || !hasCoords(device)) return null
+  if (!deviceLayer) deviceLayer = L.layerGroup().addTo(map)
+
+  const hasParent = device.parentId !== null && device.parentId !== undefined && device.parentId !== ''
+  const hasChildren = sourceDevices.some(d => d.parentId === device.id)
+  const hasCable = hasParent || hasChildren
+  const isDraggable = !hasCable
+  const zIndexOffset = device.type === 'OLT' ? 1000 : device.type === 'ODC' ? 2000 : device.type === 'ODP' ? 3000 : 4000
+
+  const marker = L.marker([Number(device.lat), Number(device.lng)], {
+    icon: getIconForType(device.type, device),
+    draggable: isDraggable,
+    riseOnHover: true,
+    zIndexOffset
+  })
+
+  const dragTip = isDraggable
+    ? ' <span style="color:#60a5fa; font-weight:bold;">(Geser Aktif)</span>'
+    : ' <span style="color:#94a3b8;">(Kabel Terhubung - Terkunci)</span>'
+
+  marker.bindTooltip(`<b>${device.name}</b><br/>${dragTip}`, {
+    direction: 'top',
+    offset: [0, -10],
+    html: true
+  })
+
+  marker.on('click', () => {
+    if (store.mapMode !== 'VIEW') return
+    selectedClient.value = device
+    isClientModalOpen.value = true
+  })
+
+  marker.addTo(deviceLayer)
+  return marker
+}
+
 const handleDeviceSaved = async (event) => {
   const saved = normalizeSavedDevice(event.detail)
   if (!saved?.id) {
@@ -211,10 +248,9 @@ const handleDeviceSaved = async (event) => {
 
   if (hasCoords(saved) && map) {
     map.invalidateSize({ animate: false })
+    addMarkerToLayer(saved, nextDevices)
     map.setView([Number(saved.lat), Number(saved.lng)], Math.max(map.getZoom(), 18), { animate: false })
   }
-
-  await loadDevices()
 }
 
 const handleDocClickForSearch = (e) => {

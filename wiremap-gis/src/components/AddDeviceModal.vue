@@ -17,9 +17,14 @@ const devices = ref([])
 const isLoadingDevices = ref(false)
 const loadError = ref('')
 
+const hasExistingOlt = computed(() =>
+  devices.value.some(device => device.type === 'OLT')
+)
+
 const resetForm = () => {
+  const defaultType = store.selectedParentId ? 'ODC' : (hasExistingOlt.value ? 'ODC' : 'OLT')
   form.value = {
-    type: store.selectedParentId ? 'ODC' : 'OLT',
+    type: defaultType,
     induk: store.selectedParentId || '',
     nama: '',
     keterangan: '',
@@ -32,6 +37,9 @@ const loadDevices = async () => {
     isLoadingDevices.value = true
     loadError.value = ''
     devices.value = await api.getDevices()
+    if (hasExistingOlt.value && form.value.type === 'OLT') {
+      form.value.type = 'ODC'
+    }
   } catch (err) {
     loadError.value = 'Gagal memuat uplink: ' + err.message
   } finally {
@@ -48,6 +56,10 @@ watch(() => store.isAddModalOpen, (isOpen) => {
 
 watch(() => form.value.type, (type) => {
   if (type === 'OLT') {
+    if (hasExistingOlt.value) {
+      form.value.type = 'ODC'
+      return
+    }
     form.value.induk = ''
     form.value.jumlahPort = ''
     return
@@ -76,6 +88,10 @@ const uplinkOptions = computed(() => {
 })
 
 const submitForm = (syncAfterSave = false) => {
+  if (form.value.type === 'OLT' && hasExistingOlt.value) {
+    loadError.value = 'Server/OLT sudah ada. Hanya boleh satu server per router.'
+    return
+  }
   emit('save', {
     ...form.value,
     syncAfterSave,
@@ -109,12 +125,15 @@ const submitForm = (syncAfterSave = false) => {
         <label class="form-field">
           <span>Type</span>
           <select v-model="form.type">
-            <option value="OLT">OLT</option>
+            <option value="OLT" :disabled="hasExistingOlt">OLT</option>
             <option value="ODC">ODC</option>
             <option value="ODP">ODP</option>
             <option value="CLIENT">CLIENT</option>
           </select>
         </label>
+        <div v-if="hasExistingOlt" class="form-alert is-info">
+          Server/OLT sudah ada. Untuk router ini hanya boleh satu server; silakan tambah ODC, ODP, atau CLIENT.
+        </div>
 
         <label v-if="form.type !== 'OLT'" class="form-field">
           <span>Uplink / Induk</span>
@@ -160,7 +179,7 @@ const submitForm = (syncAfterSave = false) => {
             v-if="form.type === 'OLT'"
             type="button"
             class="primary"
-            :disabled="!form.nama || !store.pendingCoords"
+            :disabled="!form.nama || !store.pendingCoords || hasExistingOlt"
             @click="submitForm(true)"
           >
             <span class="material-symbols-outlined">sync</span>

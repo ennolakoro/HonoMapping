@@ -2139,6 +2139,19 @@ app.post('/api/protected/devices', async (c) => {
       }).returning()
       return c.json(result[0], 201)
     } else {
+      if (body.type === 'OLT') {
+        const existingOlt = await db.select()
+          .from(devices)
+          .where(eq(devices.type, 'OLT'))
+          .limit(1)
+        if (existingOlt[0]) {
+          return c.json({
+            error: 'Server/OLT sudah ada',
+            details: 'Untuk satu router hanya boleh ada satu server/OLT. Tambahkan ODC, ODP, atau CLIENT.'
+          }, 409)
+        }
+      }
+
       // Masukkan ke tabel devices (OLT/ODC/ODP)
       const portValue = body.jumlahPort ? parseInt(body.jumlahPort, 10) : null
       const capacity = body.type === 'ODC' ? portValue : (body.kapasitas ? parseInt(body.kapasitas, 10) : null)

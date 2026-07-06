@@ -117,8 +117,7 @@ const handleSaveDevice = async (deviceData) => {
     const res = await api.addDevice(payload)
     console.log('[DEBUG FRONTEND] Berhasil menyimpan perangkat. Respon server:', res)
     window.dispatchEvent(new CustomEvent('device-saved', { detail: res }))
-    window.dispatchEvent(new CustomEvent('refresh-map'))
-    setTimeout(() => window.dispatchEvent(new CustomEvent('refresh-map')), 500)
+    setTimeout(() => window.dispatchEvent(new CustomEvent('refresh-map')), 1200)
     if (deviceData.syncAfterSave) {
       window.dispatchEvent(new CustomEvent('sync-mikrotik'))
     }
