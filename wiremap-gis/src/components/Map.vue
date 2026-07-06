@@ -2132,33 +2132,65 @@ watch(allDevicesData, (newData) => {
           </div>
 
           <!-- Device List items (compact & borderless list items) -->
-          <div class="flex-1 overflow-y-auto p-3 flex flex-col">
+          <div class="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5">
             <div v-if="filteredListDevices.length === 0" class="text-xs text-slate-400 text-center py-8">Tidak ada perangkat ditemukan.</div>
             <button 
               v-for="d in filteredListDevices" 
               :key="d.id"
               type="button"
               @click="zoomToDevice(d); isDeviceListOpen = false"
-              class="w-full text-left py-2 px-1 hover:bg-white/10 cursor-pointer flex justify-between items-center border-b border-white/5 last:border-b-0 bg-transparent transition-colors border-t-0 border-x-0 outline-none"
+              class="w-full text-left py-2.5 px-2 hover:bg-white/5 cursor-pointer flex flex-col gap-1 border-b border-white/5 last:border-b-0 bg-transparent transition-colors border-t-0 border-x-0 outline-none rounded"
             >
-              <div class="flex flex-col gap-0.5 min-w-0 flex-1 pr-2">
-                <span class="font-bold text-slate-200 text-[11px] truncate block">{{ d.name }}</span>
-                <span v-if="d.pppoeUsername" class="text-[9px] text-slate-400 font-mono truncate block">
-                  {{ d.pppoeUsername }}
-                </span>
-              </div>
-              <div class="flex items-center gap-1.5 flex-shrink-0">
+              <!-- Baris 1: Status & Nama & Tipe -->
+              <div class="flex items-center justify-between w-full">
+                <div class="flex items-center gap-1.5 min-w-0">
+                  <span 
+                    v-if="d.type === 'CLIENT'"
+                    class="w-2 h-2 rounded-full flex-shrink-0"
+                    :class="d.isOnline ? 'bg-green-500 shadow-[0_0_6px_#22c55e]' : 'bg-red-500'"
+                  ></span>
+                  <span class="font-bold text-slate-100 text-[11px] truncate block">{{ d.name }}</span>
+                </div>
                 <span 
-                  class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase"
-                  :class="d.type === 'OLT' ? 'bg-blue-900/40 text-blue-300' : d.type === 'ODC' ? 'bg-slate-800 text-slate-300' : d.type === 'ODP' ? 'bg-yellow-900/40 text-yellow-300' : 'bg-green-900/40 text-green-300'"
+                  class="px-1.5 py-0.5 rounded text-[8px] font-black uppercase flex-shrink-0"
+                  :class="d.type === 'OLT' ? 'bg-blue-900/50 text-blue-300 border border-blue-800/30' : d.type === 'ODC' ? 'bg-slate-800 text-slate-300 border border-slate-700/50' : d.type === 'ODP' ? 'bg-yellow-900/50 text-yellow-300 border border-yellow-800/30' : 'bg-green-900/50 text-green-300 border border-green-800/30'"
                 >
                   {{ d.type }}
                 </span>
-                <span 
-                  v-if="d.type === 'CLIENT'"
-                  class="w-1.5 h-1.5 rounded-full flex-shrink-0"
-                  :class="d.isOnline ? 'bg-green-500' : 'bg-red-500'"
-                ></span>
+              </div>
+              
+              <!-- Baris 2: Sub-info PPPoE / IP / SN / Model (Berdasarkan Tipe) -->
+              <div class="flex flex-wrap items-center gap-x-2 text-[9px] text-slate-400 font-mono">
+                <!-- PPPoE -->
+                <span v-if="d.pppoeUsername" class="text-sky-400 font-bold">
+                  {{ d.pppoeUsername }}
+                </span>
+                <span v-if="d.pppoeUsername && (d.lanIp || d.wanIp)" class="text-slate-600">|</span>
+                <!-- IP -->
+                <span v-if="d.lanIp || d.wanIp">
+                  {{ d.lanIp || d.wanIp }}
+                </span>
+                <span v-if="(d.lanIp || d.wanIp) && d.snModem" class="text-slate-600">|</span>
+                <!-- Model / SN -->
+                <span v-if="d.snModem || d.modelName" class="truncate max-w-[120px]" :title="d.snModem">
+                  {{ d.modelName || 'Modem' }} ({{ d.snModem ? d.snModem.slice(-6) : 'N/A' }})
+                </span>
+              </div>
+              
+              <!-- Baris 3: Status Redaman (Khusus CLIENT) -->
+              <div v-if="d.type === 'CLIENT'" class="flex items-center justify-between w-full mt-0.5">
+                <div class="flex items-center gap-1.5 text-[9px]">
+                  <span class="text-slate-500 font-bold">Redaman RX:</span>
+                  <strong 
+                    :class="parseFloat(d.rxPower) > -27 ? 'text-green-400' : 'text-red-400 font-bold'"
+                    class="font-mono text-[10px]"
+                  >
+                    {{ d.rxPower ? `${d.rxPower} dBm` : 'N/A' }}
+                  </strong>
+                </div>
+                <div v-if="d.associatedDevices !== undefined && d.associatedDevices !== null" class="text-[8px] text-slate-500 font-black bg-white/5 px-1 py-0.5 rounded">
+                  📱 {{ d.associatedDevices }} Dev
+                </div>
               </div>
             </button>
           </div>

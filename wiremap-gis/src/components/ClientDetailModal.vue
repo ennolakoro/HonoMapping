@@ -17,6 +17,8 @@ const routeMessage = ref('')
 const pppoeCredential = ref(null)
 const pppoeCredentialStatus = ref('')
 
+const activeTab = ref('status')
+
 const realClientId = computed(() => {
   const id = props.device?.id
   if (id === undefined || id === null) return null
@@ -91,8 +93,8 @@ const triggerRealtimeMonitor = async (device) => {
   }
 }
 
-watch(() => props.isOpen, (isOpen) => {
-  if (isOpen && props.device?.type === 'CLIENT') {
+watch(() => [props.isOpen, activeTab.value], ([isOpen, tab]) => {
+  if (isOpen && props.device?.type === 'CLIENT' && (tab === 'status' || tab === 'hosts')) {
     triggerRealtimeMonitor(props.device)
   } else {
     clearMonitorInterval()
@@ -118,6 +120,7 @@ const detailForm = ref({
 
 watch(() => props.device, (device) => {
   if (!device) return
+  activeTab.value = 'status'
   saveMessage.value = ''
   routeMessage.value = ''
   pppoeCredential.value = null
@@ -548,25 +551,8 @@ const handlePushConfig = async () => {
       </header>
 
       <div class="detail-body">
-        <!-- Status Online Client -->
-        <div v-if="device?.type === 'CLIENT'" class="flex flex-col gap-1 mx-4 mt-2 mb-1.5 text-[11px] font-bold">
-          <div class="flex items-center justify-between">
-            <span class="text-slate-400">Status Koneksi</span>
-            <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }" class="uppercase font-black tracking-wider">
-              ● {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
-            </strong>
-          </div>
-          <div v-if="isMonitoringRealtime || monitoringStatus" class="flex items-center gap-1.5 text-[9px] text-sky-400 mt-0.5">
-            <span class="relative flex h-2 w-2">
-              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
-              <span class="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
-            </span>
-            <span class="font-bold tracking-wide italic">{{ monitoringStatus }}</span>
-          </div>
-        </div>
-
         <!-- Compact Alur Topologi Diagram -->
-        <div v-if="devicePath && devicePath.length" class="flex items-center flex-wrap gap-1 bg-white/5 border border-white/10 rounded-lg p-2.5 mb-4 text-[10px] text-slate-300 mx-4 mt-2">
+        <div v-if="devicePath && devicePath.length" class="flex items-center flex-wrap gap-1 bg-white/5 border border-white/10 rounded-lg p-2.5 mb-3 text-[10px] text-slate-300 mx-4 mt-2">
           <span class="font-bold text-slate-400 mr-1 select-none flex items-center gap-0.5">
             <span class="material-symbols-outlined text-[12px] text-primary">account_tree</span>
             Topologi:
@@ -582,37 +568,261 @@ const handlePushConfig = async () => {
           </template>
         </div>
 
-        <section v-if="device?.type === 'CLIENT'" class="detail-card">
-          <div class="section-title-row compact">
-            <div>
-              <span class="section-eyebrow">Pelanggan</span>
-              <h3>Data Dasar</h3>
+        <!-- TABS NAVIGATION BAR (Only for CLIENT) -->
+        <div v-if="device?.type === 'CLIENT'" class="tabs-nav-bar flex border-b border-white/10 px-4 gap-3 text-[9px] font-bold uppercase select-none mb-3">
+          <button 
+            v-for="tab in [
+              { id: 'status', label: 'Status', icon: 'sensors' },
+              { id: 'config', label: 'WiFi/WAN', icon: 'settings' },
+              { id: 'info', label: 'Modem', icon: 'info' },
+              { id: 'hosts', label: 'Hosts', icon: 'devices' }
+            ]"
+            :key="tab.id"
+            type="button"
+            @click="activeTab = tab.id"
+            class="tab-btn py-2 flex items-center gap-1 border-b-2 border-transparent transition-all text-slate-400 hover:text-slate-200 outline-none cursor-pointer bg-transparent border-t-0 border-x-0 border-r-0 border-l-0"
+            :class="{ 'text-primary border-primary font-black': activeTab === tab.id }"
+          >
+            <span class="material-symbols-outlined text-[11px]">{{ tab.icon }}</span>
+            {{ tab.label }}
+          </button>
+        </div>
+
+        <!-- TAB CONTENT 1: STATUS -->
+        <template v-if="device?.type === 'CLIENT' && activeTab === 'status'">
+          <!-- Status Koneksi -->
+          <div class="flex flex-col gap-1 mx-4 mb-3 text-[11px] font-bold">
+            <div class="flex items-center justify-between">
+              <span class="text-slate-400">Status Koneksi</span>
+              <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }" class="uppercase font-black tracking-wider">
+                ● {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
+              </strong>
             </div>
-            <span v-if="saveMessage" class="save-message" :class="{ 'is-error': saveMessage.startsWith('Gagal') }">
-              {{ saveMessage }}
-            </span>
+            <!-- Pulsing Loader -->
+            <div v-if="isMonitoringRealtime || monitoringStatus" class="flex items-center gap-1.5 text-[9px] text-sky-400 mt-1">
+              <span class="relative flex h-2 w-2">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+              </span>
+              <span class="font-bold tracking-wide italic">{{ monitoringStatus }}</span>
+            </div>
           </div>
 
-          <form @submit.prevent="handleSaveDetails" class="flex flex-col gap-2.5 mt-3">
-            <div class="flex items-center text-[10px] gap-2">
-              <span class="w-24 text-slate-400 font-bold text-left">Nama:</span>
-              <input v-model="detailForm.name" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+          <!-- Diagnostic Metrics Section -->
+          <section class="status-card mx-4 p-3 bg-white/5 border border-white/10 rounded-lg mb-3">
+            <div class="card-heading flex items-center gap-1 mb-2">
+              <span class="material-symbols-outlined text-primary text-[14px]">display_settings</span>
+              <h3 class="text-[10px] font-bold text-slate-300">Redaman & Diagnostik GPON</h3>
+            </div>
+            <div class="metric-grid">
+              <div v-for="item in metricItems" :key="item.label" class="metric-card">
+                <span>{{ item.label }}</span>
+                <strong :class="item.className">{{ item.value }}</strong>
+              </div>
+            </div>
+          </section>
+
+          <!-- LAN Status Section -->
+          <section class="status-card mx-4 p-3 bg-white/5 border border-white/10 rounded-lg mb-3">
+            <div class="card-heading flex items-center gap-1 mb-2">
+              <span class="material-symbols-outlined text-primary text-[14px]">ethernet</span>
+              <h3 class="text-[10px] font-bold text-slate-300">Status Port Fisik LAN</h3>
+            </div>
+            <div class="lan-grid">
+              <div v-for="port in lanPortsList" :key="port.name" class="lan-port" :class="{ 'is-up': port.isUp }">
+                <span>{{ port.name }}</span>
+                <strong>{{ port.speed }}</strong>
+              </div>
+            </div>
+          </section>
+        </template>
+
+        <!-- TAB CONTENT 2: WIFI / WAN CONFIG -->
+        <template v-if="device?.type === 'CLIENT' && activeTab === 'config'">
+          <!-- Data Dasar Form -->
+          <section class="detail-card mx-4 mb-3">
+            <div class="section-title-row compact">
+              <div>
+                <span class="section-eyebrow">Pelanggan</span>
+                <h3>Data Dasar</h3>
+              </div>
+              <span v-if="saveMessage" class="save-message" :class="{ 'is-error': saveMessage.startsWith('Gagal') }">
+                {{ saveMessage }}
+              </span>
             </div>
 
-            <div class="flex items-center text-[10px] gap-2">
-              <span class="w-24 text-slate-400 font-bold text-left">Nomor Wa:</span>
-              <input v-model="detailForm.phone" placeholder="08xxxxxxxxxx" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+            <form @submit.prevent="handleSaveDetails" class="flex flex-col gap-2.5 mt-3">
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-20 text-slate-400 font-bold text-left">Nama:</span>
+                <input v-model="detailForm.name" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
+
+              <div class="flex items-center text-[10px] gap-2">
+                <span class="w-20 text-slate-400 font-bold text-left">Nomor Wa:</span>
+                <input v-model="detailForm.phone" placeholder="08xxxxxxxxxx" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2.5 py-1.5 text-[10px] text-white outline-none transition-all" />
+              </div>
+
+              <button type="submit" :disabled="isSavingDetails" class="save-button mt-2">
+                <span v-if="isSavingDetails" class="material-symbols-outlined spin text-[12px]">refresh</span>
+                <span v-else class="material-symbols-outlined text-[12px]">save</span>
+                Simpan Perubahan
+              </button>
+            </form>
+          </section>
+
+          <!-- Config Push Form (WiFi & WAN) -->
+          <div class="mx-4">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-[10px] font-bold text-slate-400">Pushover Konfigurasi</span>
+              <button 
+                type="button" 
+                @click="showConfigForm = !showConfigForm" 
+                class="px-2 py-1 bg-primary hover:bg-primary-hover text-white text-[9px] font-bold rounded flex items-center gap-1 border-0 cursor-pointer"
+              >
+                <span class="material-symbols-outlined text-[11px]">{{ showConfigForm ? 'expand_less' : 'expand_more' }}</span>
+                {{ showConfigForm ? 'Sembunyikan' : 'Konfigurasi WiFi/WAN' }}
+              </button>
+            </div>
+            
+            <div v-if="showConfigForm" class="config-expand-panel p-3 bg-white/5 border border-white/10 rounded-lg mb-3">
+              <div v-if="configState !== 'idle'" class="mb-3">
+                <div class="flex justify-between items-center text-[9px] font-bold mb-1">
+                  <span>Status Update Modem</span>
+                  <span>{{ configProgress }}%</span>
+                </div>
+                <div class="w-full bg-white/10 h-1 rounded overflow-hidden">
+                  <div class="bg-primary h-full transition-all duration-300" :style="{ width: configProgress + '%' }"></div>
+                </div>
+                <p class="text-[8px] text-sky-400 italic mt-1 font-bold">{{ configMessage }}</p>
+              </div>
+
+              <form @submit.prevent="handlePushConfig" class="flex flex-col gap-2.5 text-[10px]">
+                <!-- Wi-Fi 2.4G -->
+                <div class="border-b border-white/5 pb-2.5">
+                  <h4 class="text-slate-400 font-bold mb-1.5 flex items-center gap-0.5 text-[9px]"><span class="material-symbols-outlined text-[11px]">wifi</span> WiFi 2.4 GHz</h4>
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">SSID:</span>
+                      <input v-model="configForm.wifiSsid" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none" />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">Password:</span>
+                      <input v-model="configForm.wifiPassword" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none" placeholder="Isi untuk ubah" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Wi-Fi 5G -->
+                <div class="border-b border-white/5 pb-2.5">
+                  <h4 class="text-slate-400 font-bold mb-1.5 flex items-center gap-0.5 text-[9px]"><span class="material-symbols-outlined text-[11px]">wifi_tethering</span> WiFi 5 GHz</h4>
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">SSID 5G:</span>
+                      <input v-model="configForm.wifiSsid5g" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none" />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">Password 5G:</span>
+                      <input v-model="configForm.wifiPassword5g" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none" placeholder="Isi untuk ubah" />
+                    </div>
+                  </div>
+                </div>
+
+                <!-- WAN PPPoE -->
+                <div class="pb-1.5">
+                  <h4 class="text-slate-400 font-bold mb-1.5 flex items-center gap-0.5 text-[9px]"><span class="material-symbols-outlined text-[11px]">router</span> Konfigurasi PPPoE</h4>
+                  <div class="flex flex-col gap-2">
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">Username:</span>
+                      <input v-model="configForm.pppoeUsername" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none" />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">Password:</span>
+                      <input v-model="configForm.pppoePassword" class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none" placeholder="Isi untuk ubah" />
+                    </div>
+                    <div class="flex items-center gap-2">
+                      <span class="w-20 text-slate-500 text-left">VLAN ID:</span>
+                      <input v-model="configForm.vlanId" type="number" required class="flex-1 bg-white/5 hover:bg-white/10 focus:bg-white/15 border border-white/10 rounded px-2 py-1 text-[9px] text-white outline-none font-mono" />
+                    </div>
+                  </div>
+                </div>
+
+                <button type="submit" :disabled="isPushingConfig" class="save-button mt-2 text-[10px]">
+                  <span v-if="isPushingConfig" class="material-symbols-outlined spin text-[12px]">refresh</span>
+                  <span v-else class="material-symbols-outlined text-[12px]">send</span>
+                  Kirim & Terapkan Konfigurasi
+                </button>
+              </form>
+            </div>
+          </div>
+        </template>
+
+        <!-- TAB CONTENT 3: INFO MODEM -->
+        <template v-if="device?.type === 'CLIENT' && activeTab === 'info'">
+          <section class="info-card mx-4 mb-3">
+            <div class="card-heading flex items-center gap-1 mb-2">
+              <span class="material-symbols-outlined text-primary text-[14px]">info</span>
+              <h3 class="text-[10px] font-bold text-slate-300">Informasi Perangkat</h3>
+            </div>
+            <div class="info-list">
+              <div class="info-row"><span>Brand</span><strong :title="device.brand">{{ displayValue(device.brand) }}</strong></div>
+              <div class="info-row"><span>Model</span><strong :title="device.modelName">{{ displayValue(device.modelName) }}</strong></div>
+              <div class="info-row"><span>SN Modem</span><strong class="mono" :title="device.snModem">{{ displayValue(device.snModem) }}</strong></div>
+              <div class="info-row"><span>Hardware</span><strong>{{ displayValue(device.hardwareVersion) }}</strong></div>
+              <div class="info-row"><span>Software</span><strong :title="device.softwareVersion">{{ displayValue(device.softwareVersion) }}</strong></div>
+              <div class="info-row"><span>MAC</span><strong class="mono" :title="device.macAddress">{{ displayValue(device.macAddress) }}</strong></div>
+              <div class="info-row"><span>WAN IP</span><strong class="mono">{{ displayValue(device.wanIp) }}</strong></div>
+              <div class="info-row"><span>Mgmt IP</span><strong class="mono">{{ displayValue(device.lanIp) }}</strong></div>
+            </div>
+          </section>
+        </template>
+
+        <!-- TAB CONTENT 4: HOSTS TERHUBUNG -->
+        <template v-if="device?.type === 'CLIENT' && activeTab === 'hosts'">
+          <section class="info-card network-hosts-card mx-4 mb-3">
+            <div class="card-heading split flex items-center justify-between mb-2">
+              <div class="flex items-center gap-1">
+                <span class="material-symbols-outlined text-primary text-[14px]">devices</span>
+                <h3 class="text-[10px] font-bold text-slate-300">Hosts Terhubung</h3>
+              </div>
+              <div class="host-count-badge">
+                <strong>{{ wifiActiveCount }}</strong> WiFi Aktif
+              </div>
             </div>
 
+            <!-- Pulsing Sync Loader -->
+            <div v-if="isMonitoringRealtime || monitoringStatus" class="flex items-center gap-1.5 text-[9px] text-sky-400 mb-3">
+              <span class="relative flex h-2 w-2">
+                <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+                <span class="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+              </span>
+              <span class="font-bold tracking-wide italic">{{ monitoringStatus }}</span>
+            </div>
 
-
-            <button type="submit" :disabled="isSavingDetails" class="save-button mt-2">
-              <span v-if="isSavingDetails" class="material-symbols-outlined spin">refresh</span>
-              <span v-else class="material-symbols-outlined">save</span>
-              Simpan Perubahan
-            </button>
-          </form>
-        </section>
+            <div v-if="hasHostList" class="hosts-list">
+              <div v-for="(host, idx) in connectedHostsList" :key="idx" class="host-item" :class="{ 'is-active': host.active }">
+                <div class="host-icon">
+                  <span class="material-symbols-outlined">
+                    {{ String(host.hostname || '').toLowerCase().includes('android') || String(host.hostname || '').toLowerCase().includes('iphone') || String(host.hostname || '').toLowerCase().includes('phone') ? 'smartphone' : 'laptop_mac' }}
+                  </span>
+                </div>
+                <div class="host-details">
+                  <div class="host-name">{{ host.hostname || 'Device' }}</div>
+                  <div class="host-ip mono">{{ host.ip }}</div>
+                  <div class="host-mac mono">{{ host.mac }}</div>
+                </div>
+                <div class="host-status">
+                  <span class="status-dot"></span>
+                </div>
+              </div>
+            </div>
+            <div v-else-if="wifiActiveCount > 0" class="hosts-empty">
+              {{ wifiActiveCount }} perangkat WiFi aktif terdeteksi. Silakan tunggu sinkronisasi real-time selesai atau tekan Refresh.
+            </div>
+            <div v-else class="hosts-empty">
+              Tidak ada data perangkat WiFi terhubung yang ditarik dari modem.
+            </div>
+          </section>
+        </template>
 
         <!-- Node ODP / ODC Section -->
         <section v-else-if="device?.type === 'ODC' || device?.type === 'ODP'" class="detail-card node-card">
@@ -719,93 +929,6 @@ const handlePushConfig = async () => {
         </section>
 
 
-
-        <template v-if="device?.type === 'CLIENT'">
-
-
-          <section class="info-card">
-            <div class="card-heading">
-              <span class="material-symbols-outlined">memory</span>
-              <h3>Modem</h3>
-            </div>
-            <div class="info-list">
-              <div class="info-row"><span>Brand</span><strong :title="device.brand">{{ displayValue(device.brand) }}</strong></div>
-              <div class="info-row"><span>Model</span><strong :title="device.modelName">{{ displayValue(device.modelName) }}</strong></div>
-              <div class="info-row"><span>SN Modem</span><strong class="mono" :title="device.snModem">{{ displayValue(device.snModem) }}</strong></div>
-              <div class="info-row"><span>Hardware</span><strong>{{ displayValue(device.hardwareVersion) }}</strong></div>
-              <div class="info-row"><span>Software</span><strong :title="device.softwareVersion">{{ displayValue(device.softwareVersion) }}</strong></div>
-              <div class="info-row"><span>MAC</span><strong class="mono" :title="device.macAddress">{{ displayValue(device.macAddress) }}</strong></div>
-              <div class="info-row"><span>WAN IP</span><strong class="mono">{{ displayValue(device.wanIp || pppoeCredential?.address) }}</strong></div>
-              <div class="info-row"><span>Mgmt IP</span><strong class="mono">{{ displayValue(device.lanIp) }}</strong></div>
-            </div>
-          </section>
-
-          <section class="info-card network-hosts-card">
-            <div class="card-heading split">
-              <div>
-                <span class="material-symbols-outlined">devices</span>
-                <h3>Perangkat Terhubung</h3>
-              </div>
-              <div class="host-count-badge">
-                <strong>{{ wifiActiveCount }}</strong> WiFi Aktif
-              </div>
-            </div>
-            
-            <div class="lan-grid mb-3">
-              <div v-for="port in lanPortsList" :key="port.name" class="lan-port" :class="{ 'is-up': port.isUp }">
-                <span>{{ port.name }}</span>
-                <strong>{{ port.speed }}</strong>
-              </div>
-            </div>
-
-            <div v-if="hasHostList" class="hosts-list">
-              <div v-for="(host, idx) in connectedHostsList" :key="idx" class="host-item" :class="{ 'is-active': host.active }">
-                <div class="host-icon">
-                  <span class="material-symbols-outlined">
-                    {{ String(host.hostname || '').toLowerCase().includes('android') || String(host.hostname || '').toLowerCase().includes('iphone') || String(host.hostname || '').toLowerCase().includes('phone') ? 'smartphone' : 'laptop_mac' }}
-                  </span>
-                </div>
-                <div class="host-details">
-                  <div class="host-name">{{ host.hostname || 'Device' }}</div>
-                  <div class="host-ip mono">{{ host.ip }}</div>
-                  <div class="host-mac mono">{{ host.mac }}</div>
-                </div>
-                <div class="host-status">
-                  <span class="status-dot"></span>
-                </div>
-              </div>
-            </div>
-            <div v-else-if="wifiActiveCount > 0" class="hosts-empty">
-              {{ wifiActiveCount }} perangkat WiFi aktif terdeteksi, tetapi modem tidak membuka daftar nama/IP host melalui TR-069.
-            </div>
-            <div v-else class="hosts-empty">
-              Tidak ada data perangkat yang ditarik dari modem. Coba Refresh.
-            </div>
-          </section>
-
-          <!-- ACS Status / Parameter Modem moved here -->
-          <section v-if="device?.type === 'CLIENT'" class="status-card mt-4">
-            <div class="section-title-row">
-              <div>
-                <span class="section-eyebrow">ACS Status</span>
-                <h3>Parameter Modem</h3>
-              </div>
-              <span v-if="device?.type === 'CLIENT'" class="status-pill" :class="statusTone">
-                {{ hasSavedModemData ? 'Tersimpan' : 'Belum inform' }}
-              </span>
-            </div>
-
-            <div class="metric-grid">
-              <div v-for="item in metricItems" :key="item.label" class="metric-card">
-                <span>{{ item.label }}</span>
-                <strong :class="item.className">{{ item.value }}</strong>
-              </div>
-            </div>
-
-          </section>
-        </template>
-
-
       </div>
     </article>
   </div>
@@ -850,6 +973,41 @@ const handlePushConfig = async () => {
 @keyframes scaleInRight {
   from { transform: translateX(20px) scale(0.95); opacity: 0; }
   to { transform: translateX(0) scale(1); opacity: 1; }
+}
+
+.tabs-nav-bar {
+  display: flex;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  padding: 0 16px;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.tab-btn {
+  background: transparent;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 9px;
+  font-weight: bold;
+  text-transform: uppercase;
+  color: #94a3b8;
+  cursor: pointer;
+  outline: none;
+  transition: all 0.2s ease;
+}
+
+.tab-btn:hover {
+  color: #f1f5f9;
+}
+
+.tab-btn.text-primary {
+  color: #3b82f6;
+  border-bottom-color: #3b82f6;
+  font-weight: 900;
 }
 
 .detail-header {
