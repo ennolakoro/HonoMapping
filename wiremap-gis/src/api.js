@@ -41,6 +41,11 @@ export const api = {
       this.logout();
       throw new Error('Sesi berakhir');
     }
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `Gagal mengambil perangkat (${res.status})`);
+    }
     
     return res.json();
   },
@@ -55,6 +60,16 @@ export const api = {
       body: JSON.stringify(deviceData)
     });
     
+    if (res.status === 401) {
+      this.logout();
+      throw new Error('Sesi berakhir');
+    }
+
+    if (!res.ok) {
+      const errData = await res.json().catch(() => ({}));
+      throw new Error(errData.details || errData.error || `Gagal menyimpan perangkat (${res.status})`);
+    }
+
     return res.json();
   },
 

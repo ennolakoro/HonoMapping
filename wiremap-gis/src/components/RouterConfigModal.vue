@@ -116,7 +116,8 @@ const saveSettings = async () => {
     setTimeout(() => {
       isReadOnly.value = true
       successMessage.value = ''
-    }, 1500)
+      emit('close')
+    }, 600)
   } catch (err) {
     errorMessage.value = 'Gagal menyimpan konfigurasi: ' + err.message
   } finally {

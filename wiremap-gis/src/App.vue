@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, onUnmounted } from 'vue'
+import { nextTick, ref, onMounted, onUnmounted } from 'vue'
 import LeafletMap from './components/Map.vue'
 import AddDeviceModal from './components/AddDeviceModal.vue'
 import LoginScreen from './components/LoginScreen.vue'
@@ -49,7 +49,7 @@ const checkConnectionSettings = async ({ openOnSuccess = false } = {}) => {
     } else {
       await api.testSettings(settings)
       isRouterConfigured.value = openOnSuccess
-      isRouterModalOpen.value = false
+      isRouterModalOpen.value = !openOnSuccess
     }
   } catch (err) {
     if (err.message === 'Sesi berakhir' || err.message?.includes('Unauthorized')) {
@@ -70,12 +70,19 @@ const handleLoginSuccess = () => {
 }
 
 const handleSettingsSaved = () => {
-  checkConnectionSettings({ openOnSuccess: true })
+  handleOpenMap()
 }
 
-const handleOpenMap = () => {
+const handleOpenMap = async () => {
+  isRouterModalOpen.value = false
   isRouterConfigured.value = true
   routerValidationError.value = ''
+  await nextTick()
+  // Delay 100ms agar onMounted Map.vue selesai memasang event listener
+  // sebelum event wiremap-map-visible dikirim
+  setTimeout(() => window.dispatchEvent(new CustomEvent('wiremap-map-visible')), 100)
+  setTimeout(() => window.dispatchEvent(new CustomEvent('wiremap-map-visible')), 400)
+  setTimeout(() => window.dispatchEvent(new CustomEvent('wiremap-map-visible')), 1000)
 }
 
 const handleSettingsDeleted = () => {
@@ -144,7 +151,7 @@ const handleSaveDevice = async (deviceData) => {
         <div class="text-center max-w-md">
           <h2 class="text-xl font-bold tracking-tight">WireMap GIS Dashboard</h2>
           <p class="text-slate-400 text-xs mt-2 leading-relaxed">
-            Peta topologi dinonaktifkan secara default saat Anda login. Silakan kelola konfigurasi Router API Anda untuk memuat visualisasi rute kabel secara real-time.
+            Peta topologi akan aktif setelah koneksi Router API berhasil diverifikasi. Silakan kelola konfigurasi Router API untuk memuat visualisasi rute kabel secara real-time.
           </p>
           <p v-if="routerValidationError" class="text-red-300 text-xs mt-3 leading-relaxed">
             {{ routerValidationError }}

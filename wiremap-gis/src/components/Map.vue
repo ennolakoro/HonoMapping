@@ -129,6 +129,18 @@ const zoomOut = () => {
   if (map) map.zoomOut()
 }
 
+const refreshVisibleMap = () => {
+  if (!map) return
+  map.invalidateSize({ animate: false })
+}
+
+// Refresh ukuran peta DAN muat ulang data perangkat (dipanggil saat peta pertama kali terlihat)
+const refreshMapAndLoadDevices = async () => {
+  if (!map) return
+  map.invalidateSize({ animate: false })
+  await loadDevices()
+}
+
 const handleDocClickForSearch = (e) => {
   if (showSearchResults.value && !e.target.closest('.search-container-box')) {
     showSearchResults.value = false
@@ -923,6 +935,9 @@ const deleteDevice = async (device) => {
 const loadDevices = async () => {
   try {
     const devices = await api.getDevices()
+    if (!Array.isArray(devices)) {
+      throw new Error('Data perangkat yang diterima dari server tidak valid (bukan array).');
+    }
     
     // Deteksi transisi status online -> offline (atau pemulihan) untuk log gangguan & alarm suara
     const isFirstLoad = Object.keys(previousOnlineStatuses).length === 0
@@ -1208,6 +1223,9 @@ const loadDevices = async () => {
     })
   } catch (err) {
     console.error("Gagal menarik data topology:", err)
+    if (Object.keys(previousOnlineStatuses).length === 0) {
+      alert("Gagal memuat perangkat dari database server: " + err.message)
+    }
   }
 }
 
@@ -1506,10 +1524,19 @@ onMounted(() => {
   window.addEventListener('lihat-detail', handleLihatDetailEvent)
   window.addEventListener('sync-mikrotik', triggerSync)
   window.addEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
+  window.addEventListener('wiremap-map-visible', refreshMapAndLoadDevices)
   
   document.addEventListener('click', handleDocClickForSearch)
-  loadDevices()
   startAutoRefresh()
+  // Tunda loadDevices() sedikit agar DOM map benar-benar siap & modal config sudah tertutup
+  setTimeout(() => {
+    map.invalidateSize()
+    loadDevices()
+  }, 300)
+  setTimeout(() => {
+    map.invalidateSize()
+    loadDevices()
+  }, 900)
 })
 
 onUnmounted(() => {
@@ -1520,6 +1547,7 @@ onUnmounted(() => {
   window.removeEventListener('lihat-detail', handleLihatDetailEvent)
   window.removeEventListener('sync-mikrotik', triggerSync)
   window.removeEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
+  window.removeEventListener('wiremap-map-visible', refreshMapAndLoadDevices)
 })
 
 watch(unmappedClients, (clients) => {
