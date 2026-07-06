@@ -582,20 +582,22 @@ export function parseGetParameterValuesResponse(xmlString: string) {
   const rawParams = parseParameterValueMap(xmlString);
   const wanConfig = normalizeWanConfig(rawParams);
   const getParameterValue = (xml: string, paramName: string) => {
-    // Regex mencari blok Name-Value di ParameterValueStruct, mengabaikan namespace/prefix
-    const escapedName = paramName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const regex = new RegExp(`<Name>${escapedName}</Name>\\s*<Value[^>]*>(.*?)</Value>`);
-    const match = xml.match(regex);
-    return match ? match[1] : null;
+    return rawParams[paramName] !== undefined ? rawParams[paramName] : null;
   };
 
   const firstValue = (...names: string[]) => {
     for (const name of names) {
-      const value = getParameterValue(xmlString, name)
-      if (value !== null && value !== undefined && value !== '') return value
+      const value = rawParams[name];
+      if (value !== null && value !== undefined && value !== '') return value;
     }
-    return null
-  }
+    // Fallback case-insensitive
+    for (const name of names) {
+      const lowerName = name.toLowerCase();
+      const match = Object.entries(rawParams).find(([k]) => k.toLowerCase() === lowerName);
+      if (match && match[1] !== undefined && match[1] !== '') return match[1];
+    }
+    return null;
+  };
 
   const findValueByRegex = (patterns: RegExp[]) => {
     for (const pattern of patterns) {
@@ -672,10 +674,83 @@ export function parseGetParameterValuesResponse(xmlString: string) {
 
   console.log('[DEBUG CWMP] Hasil parsing hosts dari stage 1:', connectedHosts.length);
 
-  const ssid = firstValue('InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID', 'Device.WiFi.SSID.1.SSID');
-  const password = firstValue('InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase', 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey');
-  const ssid5g = firstValue('InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.SSID', 'Device.WiFi.SSID.5.SSID');
-  const password5g = firstValue('InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.KeyPassphrase', 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.5.PreSharedKey.1.PreSharedKey');
+  // Dynamic WiFi extraction
+  const wlans: { ssid: string; pass: string; index: number }[] = [];
+  const wlanKeys = Object.keys(rawParams);
+
+  // 1. Scan TR-098 WLANConfiguration
+  const igdWlanIds = new Set<string>();
+  wlanKeys.forEach(k => {
+    const match = k.match(/WLANConfiguration\.(\d+)\./i);
+    if (match) igdWlanIds.add(match[1]);
+  });
+
+  if (igdWlanIds.size > 0) {
+    for (const id of Array.from(igdWlanIds).map(Number).sort((a,b)=>a-b)) {
+      const wlanSsid = rawParams[`InternetGatewayDevice.LANDevice.1.WLANConfiguration.${id}.SSID`];
+      if (wlanSsid) {
+        const wlanPass = rawParams[`InternetGatewayDevice.LANDevice.1.WLANConfiguration.${id}.KeyPassphrase`] ||
+                        rawParams[`InternetGatewayDevice.LANDevice.1.WLANConfiguration.${id}.PreSharedKey.1.PreSharedKey`] ||
+                        rawParams[`InternetGatewayDevice.LANDevice.1.WLANConfiguration.${id}.PreSharedKey.1.KeyPassphrase`] ||
+                        '';
+        wlans.push({ ssid: wlanSsid, pass: wlanPass, index: id });
+      }
+    }
+  } else {
+    // 2. Scan TR-181 Device.WiFi
+    const devWlanIds = new Set<string>();
+    wlanKeys.forEach(k => {
+      const match = k.match(/Device\.WiFi\.SSID\.(\d+)\./i);
+      if (match) devWlanIds.add(match[1]);
+    });
+
+    for (const id of Array.from(devWlanIds).map(Number).sort((a,b)=>a-b)) {
+      const wlanSsid = rawParams[`Device.WiFi.SSID.${id}.SSID`];
+      if (wlanSsid) {
+        const wlanPass = rawParams[`Device.WiFi.AccessPoint.${id}.Security.KeyPassphrase`] ||
+                        rawParams[`Device.WiFi.Security.${id}.KeyPassphrase`] ||
+                        rawParams[`Device.WiFi.AccessPoint.${id}.Security.PreSharedKey`] ||
+                        '';
+        wlans.push({ ssid: wlanSsid, pass: wlanPass, index: id });
+      }
+    }
+  }
+
+  // Determine 2.4G and 5G:
+  let ssid: string | null = null;
+  let password: string | null = null;
+  let ssid5g: string | null = null;
+  let password5g: string | null = null;
+
+  const wlan24gInstance = wlans.find(w => w.index === 1) || wlans[0];
+  if (wlan24gInstance) {
+    ssid = wlan24gInstance.ssid;
+    password = wlan24gInstance.pass;
+  }
+
+  const wlan5gInstance = wlans.find(w => w.index === 5 || w.index === 2 || w.index === 6);
+  if (wlan5gInstance && wlan5gInstance.index !== wlan24gInstance?.index) {
+    ssid5g = wlan5gInstance.ssid;
+    password5g = wlan5gInstance.pass;
+  } else if (wlans.length > 1) {
+    const secondWlan = wlans.find(w => w.index !== wlan24gInstance?.index);
+    if (secondWlan) {
+      ssid5g = secondWlan.ssid;
+      password5g = secondWlan.pass;
+    }
+  }
+
+  const wanIp = firstValue(
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress',
+    'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress',
+    'Device.PPP.Interface.1.IPCP.LocalIPAddress',
+    'Device.IP.Interface.1.IPv4Address.1.IPAddress'
+  ) || findValueByRegex([
+    /\.WANPPPConnection\.\d+\.ExternalIPAddress$/i,
+    /\.WANIPConnection\.\d+\.ExternalIPAddress$/i,
+    /\.PPP\.Interface\.\d+\.IPCP\.LocalIPAddress$/i,
+    /\.IP\.Interface\.\d+\.IPv4Address\.\d+\.IPAddress$/i
+  ]);
 
   return {
     ssid,
@@ -698,7 +773,7 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     hardwareVersion: firstValue('InternetGatewayDevice.DeviceInfo.HardwareVersion', 'Device.DeviceInfo.HardwareVersion'),
     softwareVersion: firstValue('InternetGatewayDevice.DeviceInfo.SoftwareVersion', 'Device.DeviceInfo.SoftwareVersion'),
     macAddress: firstValue('InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.MACAddress', 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.BSSID', 'Device.Ethernet.Interface.1.MACAddress'),
-    wanIp: firstValue('InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress', 'Device.PPP.Interface.1.IPCP.LocalIPAddress', 'Device.IP.Interface.1.IPv4Address.1.IPAddress'),
+    wanIp,
     rxPower: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower', 'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower', 'Device.Optical.Interface.1.RXPower') || findValueByRegex([/GponInterface.*RxOpticalPower$/i, /GPON_Interface.*RxOpticalPower$/i, /Optical.*RXPower$/i]),
     txPower: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower', 'Device.Optical.Interface.1.TXPower') || findValueByRegex([/GponInterface.*TxOpticalPower$/i, /GPON_Interface.*TxOpticalPower$/i, /Optical.*TXPower$/i]),
     temperature: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature', 'Device.Optical.Interface.1.TransceiverTemperature') || findValueByRegex([/GponInterface.*Temperature$/i, /GPON_Interface.*Temperature$/i, /Optical.*Temperature$/i, /TransceiverTemperature$/i]),
