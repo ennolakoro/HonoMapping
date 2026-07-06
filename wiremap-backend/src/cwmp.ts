@@ -144,23 +144,6 @@ export const igdBaseParams = [
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.3.MaxBitRate',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.Status',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.4.MaxBitRate',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Name',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Username',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Password',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.NATEnabled',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.Enable',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ConnectionStatus',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.X_HW_VLAN',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.X_ZTE-COM_VLANID',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.Name',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.NATEnabled',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.Enable',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ConnectionStatus',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_HW_VLAN',
-  'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.X_ZTE-COM_VLANID',
-  ...buildIgdWanParams(),
 ]
 
 const deviceBaseParams = [
@@ -178,17 +161,6 @@ const deviceBaseParams = [
   'Device.Ethernet.Interface.2.Status',
   'Device.Ethernet.Interface.3.Status',
   'Device.Ethernet.Interface.4.Status',
-  'Device.PPP.Interface.1.IPCP.LocalIPAddress',
-  'Device.PPP.Interface.1.Username',
-  'Device.PPP.Interface.1.Password',
-  'Device.PPP.Interface.1.Enable',
-  'Device.PPP.Interface.1.Status',
-  'Device.PPP.Interface.1.Name',
-  'Device.IP.Interface.1.IPv4Address.1.IPAddress',
-  'Device.IP.Interface.1.Enable',
-  'Device.IP.Interface.1.Status',
-  'Device.IP.Interface.1.Name',
-  ...buildDeviceWanParams(),
 ]
 
 const opticalProfiles: Record<string, string[]> = {
