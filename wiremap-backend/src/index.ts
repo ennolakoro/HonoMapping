@@ -51,6 +51,7 @@ const ensureClientInventoryColumns = async (db: any) => {
     ['admin_password', 'text'],
     ['raw_modem_params_json', 'text'],
     ['modem_profile', 'text'],
+    ['parameter_list_json', 'text'],
   ]
 
   for (const [name, type] of columns) {
@@ -134,7 +135,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { buildParameterRequestList, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
+import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -309,7 +310,7 @@ interface CwmpSession {
   gponFaultRetried: boolean;
   updatedAt: number;
   // Multi-stage host fetching
-  stage: 'params' | 'wan_names' | 'host_names' | 'host_values' | 'done';
+  stage: 'params' | 'wan_names' | 'host_names' | 'host_values' | 'done' | 'discover_params';
   wanNameRoots?: string[];
   wanDiscoveredParams?: string[];
   pendingModemData?: any; // data dari stage 1 sementara disimpan
@@ -731,6 +732,7 @@ const cwmpHandler = async (c: any) => {
     let clientId: number | null = null
     let clientName = informData.SerialNumber ? `ONT-${informData.SerialNumber}` : `ONT-${clientIp}`
     let currentClientIp: string | null = null
+    let existingClientRow: any = null
 
     if (informData.SerialNumber) {
       // Cari apakah client dengan serial number ini sudah terdaftar
@@ -828,7 +830,11 @@ const cwmpHandler = async (c: any) => {
         }).returning()
         
         clientId = inserted[0].id
+        existingClientRow = inserted[0]
         console.log(`[MiniACS] Auto-created client record for unknown Serial Number: ${informData.SerialNumber}`)
+      }
+      if (!existingClientRow) {
+        existingClientRow = existing[0] || null
       }
     }
 
@@ -872,12 +878,28 @@ const cwmpHandler = async (c: any) => {
       session.updatedAt = Date.now()
       cwmpSessions.set(sessionKey, session)
     } else {
-      const paramsToReq = buildParameterRequestList(informData.manufacturer, informData.SerialNumber, informData.rootDataModel)
-      console.log(`[CWMP] Profile ${informData.rootDataModel || 'InternetGatewayDevice'} untuk ${informData.manufacturer || informData.SerialNumber || clientName}: ${paramsToReq.length} parameter`)
- 
+      let parameterList: string[] = []
+      let stage: CwmpSession['stage'] = 'params'
+      if (existingClientRow?.parameterListJson) {
+        try {
+          parameterList = JSON.parse(existingClientRow.parameterListJson)
+        } catch {
+          parameterList = []
+        }
+      }
+
+      let paramsToReq = parameterList.length > 0 ? parameterList : buildParameterRequestList(informData.manufacturer, informData.SerialNumber, informData.rootDataModel)
+      
       const progressKeys = getProgressKeysForClient(clientId, [clientIp, currentClientIp])
       const existingProgress = getFirstProgress(progressKeys)
       const requestMode = existingProgress?.mode || 'inform'
+
+      if (parameterList.length === 0 && requestMode !== 'config') {
+        stage = 'discover_params'
+        console.log(`[CWMP] Cache kosong. Discovery parameter dinamis dimulai untuk ${clientName}`)
+      } else {
+        console.log(`[CWMP] Menggunakan ${paramsToReq.length} parameter (cached/static) untuk ${clientName}`)
+      }
 
       session = {
         waitingForEmptyPost: true,
@@ -896,7 +918,7 @@ const cwmpHandler = async (c: any) => {
         currentRequestMode: requestMode,
         gponFaultRetried: false,
         updatedAt: Date.now(),
-        stage: 'params',
+        stage,
         wanNameRoots: [],
         wanDiscoveredParams: [],
         pendingModemData: undefined,
@@ -1002,6 +1024,22 @@ const cwmpHandler = async (c: any) => {
           progress: 70,
           status: 'fetching',
           updatedAt: Date.now()
+        })
+      }
+
+      if (session.stage === 'discover_params') {
+        const rootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
+          ? 'Device.'
+          : 'InternetGatewayDevice.'
+        
+        console.log(`[CWMP] Mengirim GetParameterNames pada root '${rootPath}' untuk ${session.currentModemSN}`)
+        const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, rootPath, false);
+        return new Response(responseXml, {
+          headers: {
+            'Content-Type': 'text/xml',
+            'Server': 'Hono-MiniACS',
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+          }
         })
       }
 
@@ -1209,6 +1247,37 @@ const cwmpHandler = async (c: any) => {
     }
     
     if (bodyText.includes('GetParameterNamesResponse')) {
+      if (session.stage === 'discover_params') {
+        const allNames = parseAllParameterNamesResponse(bodyText)
+        const dynamicParams = filterDynamicParameters(allNames)
+        console.log(`[CWMP] Discovery parameter dinamis selesai untuk ${session.currentModemSN}. Ditemukan ${dynamicParams.length} parameter dari total ${allNames.length}.`)
+        
+        session.currentParamsToRequest = dynamicParams
+        session.stage = 'params'
+        session.updatedAt = Date.now()
+        cwmpSessions.set(sessionKey, session)
+
+        if (session.currentTriggeredClientId) {
+          try {
+            await db.update(clients)
+              .set({ parameterListJson: JSON.stringify(dynamicParams) })
+              .where(eq(clients.id, session.currentTriggeredClientId))
+            console.log(`[CWMP] Menyimpan parameterListJson untuk clientId=${session.currentTriggeredClientId} ke DB.`)
+          } catch (dbErr: any) {
+            console.error(`[CWMP] Gagal menyimpan parameterListJson ke DB:`, dbErr.message)
+          }
+        }
+
+        const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, dynamicParams);
+        return new Response(responseXml, {
+          headers: {
+            'Content-Type': 'text/xml',
+            'Server': 'Hono-MiniACS',
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+          }
+        })
+      }
+
       if (session.stage === 'wan_names') {
         const names = parseAllParameterNamesResponse(bodyText)
         const wanParams = filterWanParameterNames(names)

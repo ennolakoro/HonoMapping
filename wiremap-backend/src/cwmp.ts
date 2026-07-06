@@ -253,6 +253,44 @@ export function buildParameterRequestList(manufacturer?: string | null, serial?:
   return uniqueParams([...igdBaseParams, ...adminConfigParams, ...(opticalProfiles[vendor] || []), ...opticalProfiles.generic])
 }
 
+export function filterDynamicParameters(names: string[]): string[] {
+  const targets = [
+    // DeviceInfo
+    /DeviceInfo\.(Manufacturer|ModelName|ProductClass|HardwareVersion|SoftwareVersion|MACAddress)$/i,
+    
+    // Optical Power (GPON)
+    /GponInterface.*RxOpticalPower$/i,
+    /GponInterface.*TxOpticalPower$/i,
+    /GponInterface.*Temperature$/i,
+    /GponInterface.*SupplyVoltage$/i,
+    /GponInterafceConfig\.(RXPower|TXPower|TransceiverTemperature|SupplyVoltage)$/i,
+    /GPON_Interface\.(RxOpticalPower|TxOpticalPower|TransceiverTemperature|SupplyVoltage)$/i,
+    /Optical\.Interface\.\d+\.(RXPower|TXPower|TransceiverTemperature|SupplyVoltage)$/i,
+    
+    // WiFi Configurations
+    /WLANConfiguration\.\d+\.(SSID|KeyPassphrase)$/i,
+    /WLANConfiguration\.\d+\.PreSharedKey\.\d+\.PreSharedKey$/i,
+    /WLANConfiguration\.\d+\.(TotalAssociations|AssociatedDeviceNumberOfEntries)$/i,
+    /WiFi\.SSID\.\d+\.SSID$/i,
+    /WiFi\.AccessPoint\.\d+\.AssociatedDeviceNumberOfEntries$/i,
+    
+    // Admin Credential
+    /UserInterface\..*UserName$/i,
+    /UserInterface\..*Username$/i,
+    /UserInterface\..*Password$/i,
+    /Users\.User\.\d+\.Username$/i,
+    /Users\.User\.\d+\.Password$/i,
+  ];
+
+  const filtered = names.filter(name => {
+    return targets.some(regex => regex.test(name));
+  });
+
+  const wanParams = filterWanParameterNames(names);
+
+  return uniqueParams([...filtered, ...wanParams]);
+}
+
 /**
  * Parse respons GetParameterNames dari modem.
  * Mengembalikan array nama parameter leaf yang relevan untuk host list.
@@ -587,6 +625,14 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     return null
   }
 
+  const findValueByRegex = (patterns: RegExp[]) => {
+    for (const pattern of patterns) {
+      const match = Object.entries(rawParams).find(([name]) => pattern.test(name));
+      if (match && match[1] !== undefined && match[1] !== '') return match[1];
+    }
+    return null;
+  }
+
   // LAN Ports Status Summary (LAN 1 - LAN 4)
   const lanPorts: string[] = [];
   for (let i = 1; i <= 4; i++) {
@@ -681,10 +727,10 @@ export function parseGetParameterValuesResponse(xmlString: string) {
     softwareVersion: firstValue('InternetGatewayDevice.DeviceInfo.SoftwareVersion', 'Device.DeviceInfo.SoftwareVersion'),
     macAddress: firstValue('InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.MACAddress', 'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.BSSID', 'Device.Ethernet.Interface.1.MACAddress'),
     wanIp: firstValue('InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANPPPConnection.1.ExternalIPAddress', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.WANIPConnection.1.ExternalIPAddress', 'Device.PPP.Interface.1.IPCP.LocalIPAddress', 'Device.IP.Interface.1.IPv4Address.1.IPAddress'),
-    rxPower: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower', 'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower', 'Device.Optical.Interface.1.RXPower'),
-    txPower: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower', 'Device.Optical.Interface.1.TXPower'),
-    temperature: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature', 'Device.Optical.Interface.1.TransceiverTemperature'),
-    voltage: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage', 'Device.Optical.Interface.1.SupplyVoltage')
+    rxPower: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.RXPower', 'InternetGatewayDevice.WANDevice.1.X_HW_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_HW_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.RxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.RxOpticalPower', 'Device.Optical.Interface.1.RXPower') || findValueByRegex([/GponInterface.*RxOpticalPower$/i, /GPON_Interface.*RxOpticalPower$/i, /Optical.*RXPower$/i]),
+    txPower: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TXPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TxOpticalPower', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TxOpticalPower', 'Device.Optical.Interface.1.TXPower') || findValueByRegex([/GponInterface.*TxOpticalPower$/i, /GPON_Interface.*TxOpticalPower$/i, /Optical.*TXPower$/i]),
+    temperature: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.TransceiverTemperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.Temperature', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.TransceiverTemperature', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.TransceiverTemperature', 'Device.Optical.Interface.1.TransceiverTemperature') || findValueByRegex([/GponInterface.*Temperature$/i, /GPON_Interface.*Temperature$/i, /Optical.*Temperature$/i, /TransceiverTemperature$/i]),
+    voltage: firstValue('InternetGatewayDevice.WANDevice.1.X_GponInterafceConfig.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ZTE_GponInterface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_FHTT_GponInterface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.WANConnectionDevice.1.X_ALU_GponInterface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.X_GPON_Interface.SupplyVoltage', 'InternetGatewayDevice.WANDevice.1.X_GponInterface.SupplyVoltage', 'Device.Optical.Interface.1.SupplyVoltage') || findValueByRegex([/GponInterface.*SupplyVoltage$/i, /GPON_Interface.*SupplyVoltage$/i, /Optical.*SupplyVoltage$/i, /SupplyVoltage$/i])
   };
 }
 
