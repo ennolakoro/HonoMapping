@@ -386,6 +386,16 @@ const requestNextWanNameRoot = (session: CwmpSession) => {
   return createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, nextRoot, false)
 }
 
+const requestWanValuesFromDiscoveredParams = (session: CwmpSession) => {
+  const params = [...new Set(session.wanDiscoveredParams || [])]
+  if (!params.length) return null
+  session.stage = 'params'
+  session.wanNameRoots = []
+  session.updatedAt = Date.now()
+  console.log(`[CWMP] Discovery WAN values dimulai untuk ${session.currentModemSN}: ${params.length} parameter`)
+  return createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, params)
+}
+
 const getWanPppAddObjectCandidates = (profile?: string | null) => {
   const tr098: string[] = []
   for (let wanDevice = 1; wanDevice <= 2; wanDevice++) {
@@ -1182,6 +1192,20 @@ const cwmpHandler = async (c: any) => {
         session.wanDiscoveredParams = [...new Set([...(session.wanDiscoveredParams || []), ...wanParams])]
         console.log(`[CWMP] Discovery WAN names ${session.currentModemSN}: +${wanParams.length}, total=${session.wanDiscoveredParams.length}`)
 
+        if (session.wanDiscoveredParams.length > 0) {
+          const responseXml = requestWanValuesFromDiscoveredParams(session)
+          cwmpSessions.set(sessionKey, session)
+          if (responseXml) {
+            return new Response(responseXml, {
+              headers: {
+                'Content-Type': 'text/xml',
+                'Server': 'Hono-MiniACS',
+                'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+              }
+            })
+          }
+        }
+
         const nextXml = requestNextWanNameRoot(session)
         if (nextXml) {
           cwmpSessions.set(sessionKey, session)
@@ -1299,6 +1323,21 @@ const cwmpHandler = async (c: any) => {
       }
 
       if (faultCode === '9005' && session.stage === 'wan_names') {
+        if ((session.wanDiscoveredParams || []).length > 0) {
+          console.warn(`[CWMP] Root WAN fault ${faultCode} setelah parameter ditemukan untuk ${session.currentModemSN}. Lanjut ambil value WAN.`)
+          const responseXml = requestWanValuesFromDiscoveredParams(session)
+          cwmpSessions.set(sessionKey, session)
+          if (responseXml) {
+            return new Response(responseXml, {
+              headers: {
+                'Content-Type': 'text/xml',
+                'Server': 'Hono-MiniACS',
+                'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+              }
+            })
+          }
+        }
+
         console.warn(`[CWMP] Root WAN tidak didukung oleh ${session.currentModemSN}, mencoba root berikutnya.`)
         const nextXml = requestNextWanNameRoot(session)
         if (nextXml) {

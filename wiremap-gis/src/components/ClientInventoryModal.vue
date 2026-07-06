@@ -48,6 +48,7 @@ const adminForm = ref({
 })
 
 let pollTimer = null
+const autoDiscoveryStarted = new Set()
 
 const display = (value, fallback = 'N/A') => {
   if (value === null || value === undefined || value === '') return fallback
@@ -117,7 +118,7 @@ const wanInfoText = computed(() => {
     return 'Client ini bertipe PPPoE, tetapi username PPP belum ter-link dari sync Mikrotik. Jalankan Sync Router/Mikrotik agar username PPP, IP, dan uptime terisi.'
   }
   if (!selectedWanRows.value.length) {
-    return 'Belum ada object WAN internet yang terbaca dari modem. Klik Ambil Data untuk discovery WAN, atau Tambah PPP untuk mencoba AddObject WANPPPConnection.'
+    return 'Belum ada object WAN internet yang terbaca dari modem. Gunakan Refresh untuk menarik data terbaru, atau Tambah PPP untuk mencoba AddObject WANPPPConnection.'
   }
   return 'Tabel ini berisi object WAN yang benar-benar dibaca dari modem via TR-069. IPoE berarti WAN modem mode DHCP/static, bukan PPPoE.'
 })
@@ -194,6 +195,10 @@ const selectClient = async (client) => {
   try {
     selectedClient.value = await api.getClientDetail(client.id)
     syncFormsFromClient()
+    if (!autoDiscoveryStarted.has(client.id) && selectedClient.value?.triggerIp) {
+      autoDiscoveryStarted.add(client.id)
+      discoverWan({ automatic: true })
+    }
   } catch (err) {
     actionMessage.value = 'Gagal buka detail: ' + err.message
     actionState.value = 'failed'
@@ -209,13 +214,33 @@ const backToList = () => {
   isWanPppFormOpen.value = false
 }
 
-const waitForClientSync = async (client, label = 'Menunggu modem Inform...') => {
+const waitForClientSync = async (client, label = 'Menunggu modem Inform...', options = {}) => {
   const keys = [client.triggerIp, String(client.id)].filter(Boolean)
   const timeoutAt = Date.now() + 120000
+  const repokeEveryMs = options.repokeEveryMs || 25000
+  const maxRepoke = options.maxRepoke ?? 3
+  let lastPokeAt = Date.now()
+  let repokeCount = 0
+
   while (Date.now() < timeoutAt) {
     await new Promise(resolve => setTimeout(resolve, 2500))
     const statusMap = await api.getModemSyncStatus()
     const status = keys.map(key => statusMap[key]).find(Boolean)
+
+    if (
+      options.repoke &&
+      repokeCount < maxRepoke &&
+      Date.now() - lastPokeAt >= repokeEveryMs &&
+      (!status || !['success', 'failed'].includes(status.status))
+    ) {
+      repokeCount += 1
+      lastPokeAt = Date.now()
+      actionMessage.value = `Colek modem ulang (${repokeCount}/${maxRepoke})...`
+      actionProgress.value = Math.max(actionProgress.value, Math.min(75, 20 + repokeCount * 18))
+      await options.repoke().catch(() => {})
+      continue
+    }
+
     if (!status) {
       actionMessage.value = label
       actionProgress.value = Math.max(actionProgress.value, 15)
@@ -240,20 +265,23 @@ const waitForClientSync = async (client, label = 'Menunggu modem Inform...') => 
   throw new Error('Timeout menunggu modem mengirim data')
 }
 
-const discoverWan = async () => {
+const discoverWan = async ({ automatic = false } = {}) => {
   if (!selectedClient.value) return
   const clientId = selectedClient.value.id
+  const clientSnapshot = { ...selectedClient.value }
   isDiscovering.value = true
-  actionMessage.value = 'Mengirim trigger discovery WAN...'
+  actionMessage.value = automatic ? 'Auto discovery WAN berjalan...' : 'Refresh data modem dan WAN...'
   actionProgress.value = 10
   actionState.value = 'triggered'
   try {
     const response = await api.discoverClientWan(clientId)
     if (response?.queued) {
-      actionMessage.value = 'Trigger masuk antrian. Menunggu Inform berikutnya dari modem...'
+      actionMessage.value = 'Colek modem dikirim. Menunggu modem membalas Inform...'
     }
-    await waitForClientSync(selectedClient.value, 'Menunggu modem mengirim WAN configuration...')
-    actionMessage.value = 'WAN configuration diperbarui'
+    await waitForClientSync(clientSnapshot, 'Menunggu modem mengirim WAN configuration...', {
+      repoke: () => api.discoverClientWan(clientSnapshot.id)
+    })
+    actionMessage.value = automatic ? 'Data WAN otomatis diperbarui' : 'Data modem dan WAN diperbarui'
   } catch (err) {
     const message = err.message || ''
     try {
@@ -266,18 +294,26 @@ const discoverWan = async () => {
     const isInformDelay = /Inform|Timeout|antrian|colek|Connection Request/i.test(message)
     if (isInformDelay) {
       actionMessage.value = hasWanData
-        ? 'Modem belum mengirim Inform terbaru. Data WAN terakhir tetap ditampilkan.'
-        : 'Discovery WAN sudah diantrikan. Data WAN akan muncul setelah modem mengirim Inform berikutnya.'
+        ? 'Modem belum membalas colek terbaru. Data WAN terakhir tetap ditampilkan.'
+        : 'Modem belum membalas colek. Coba cek akses IP management/CWMP modem lalu klik Refresh lagi.'
       actionProgress.value = hasWanData ? 100 : Math.max(actionProgress.value, 35)
       actionState.value = hasWanData ? 'success' : 'waiting'
       return
     }
 
-    actionMessage.value = 'Gagal ambil data WAN: ' + message
+    actionMessage.value = (automatic ? 'Auto discovery gagal: ' : 'Gagal refresh data: ') + message
     actionProgress.value = 100
     actionState.value = 'failed'
   } finally {
     isDiscovering.value = false
+  }
+}
+
+const handleRefresh = async () => {
+  if (selectedClient.value) {
+    await discoverWan({ automatic: false })
+  } else {
+    await loadClients()
   }
 }
 
@@ -291,9 +327,11 @@ const informClient = async () => {
   try {
     const response = await api.informClient(clientId)
     if (response?.queued) {
-      actionMessage.value = 'Trigger masuk antrian. Menunggu Inform berikutnya dari modem...'
+      actionMessage.value = 'Colek modem dikirim. Menunggu modem membalas Inform...'
     }
-    await waitForClientSync(selectedClient.value, 'Menunggu modem mengirim data terbaru...')
+    await waitForClientSync(selectedClient.value, 'Menunggu modem mengirim data terbaru...', {
+      repoke: () => api.informClient(clientId)
+    })
     actionMessage.value = 'Data modem diperbarui'
   } catch (err) {
     const message = err.message || ''
@@ -304,7 +342,7 @@ const informClient = async () => {
     } catch (_) {}
 
     if (/Inform|Timeout|antrian|colek|Connection Request/i.test(message)) {
-      actionMessage.value = 'Inform sudah diantrikan. Data akan diperbarui otomatis saat modem mengirim Inform berikutnya.'
+      actionMessage.value = 'Modem belum membalas colek. Coba cek akses IP management/CWMP modem lalu klik Inform lagi.'
       actionProgress.value = Math.max(actionProgress.value, 35)
       actionState.value = 'waiting'
       return
@@ -487,6 +525,7 @@ const saveAdminConfig = async () => {
 
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
+    autoDiscoveryStarted.clear()
     loadClients()
   } else if (pollTimer) {
     clearInterval(pollTimer)
@@ -516,8 +555,8 @@ watch(() => props.isOpen, (isOpen) => {
           <span class="material-symbols-outlined">search</span>
           <input v-model="search" @keyup.enter="loadClients" placeholder="Cari Client" />
         </label>
-        <button type="button" @click="loadClients" :disabled="isLoading">
-          <span class="material-symbols-outlined" :class="{ spin: isLoading }">refresh</span>
+        <button type="button" @click="handleRefresh" :disabled="isLoading || isDiscovering">
+          <span class="material-symbols-outlined" :class="{ spin: isLoading || isDiscovering }">refresh</span>
           Refresh
         </button>
       </div>
@@ -606,10 +645,6 @@ watch(() => props.isOpen, (isOpen) => {
               <div class="section-split">
                 <h4>WAN Config</h4>
                 <div class="section-actions">
-                  <button type="button" @click="discoverWan" :disabled="isDiscovering">
-                    <span class="material-symbols-outlined" :class="{ spin: isDiscovering }">download</span>
-                    Ambil Data
-                  </button>
                   <button type="button" @click="openAddWanPpp" :class="{ muted: !canAddWanPpp }">
                     <span class="material-symbols-outlined">add_link</span>
                     Tambah PPP
