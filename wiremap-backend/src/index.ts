@@ -33,6 +33,14 @@ app.get('/', (c) => {
   return c.text('WireMap GIS API Server (Hono + Turso) is Running!')
 })
 
+app.onError((err, c) => {
+  console.error('[Hono] Unhandled error:', err)
+  return c.json({
+    error: 'Internal server error',
+    details: err instanceof Error ? err.message : String(err)
+  }, 500)
+})
+
 const ensureClientInventoryColumns = async (db: any) => {
   if (clientInventoryColumnsReady) return
   const columns = [
@@ -1976,9 +1984,6 @@ app.get('/api/protected/devices', async (c) => {
   try {
     const db = getDb(c.env)
     await ensureClientInventoryColumns(db)
-    cleanupOldGarbageData(db).catch(err => {
-      console.error('[Cleanup] Background cleanup error:', err)
-    })
     const allDevices = await db.select().from(devices)
     const allClients = await db.select().from(clients)
 
@@ -2036,6 +2041,17 @@ app.get('/api/protected/devices', async (c) => {
   } catch (err: any) {
     console.error('Error fetching topology devices:', err)
     return c.json({ error: 'Gagal mengambil data topologi', details: err.message }, 500)
+  }
+})
+
+app.post('/api/protected/maintenance/cleanup-map-data', async (c) => {
+  try {
+    const db = getDb(c.env)
+    await cleanupOldGarbageData(db)
+    return c.json({ success: true, message: 'Cleanup data map selesai.' })
+  } catch (err: any) {
+    console.error('[Cleanup] Error:', err)
+    return c.json({ error: 'Gagal cleanup data map', details: err.message }, 500)
   }
 })
 

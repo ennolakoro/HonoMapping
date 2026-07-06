@@ -31,11 +31,27 @@ export const api = {
   },
 
   async getDevices() {
-    const res = await fetch(`${API_URL}/protected/devices`, {
-      headers: {
-        'Authorization': `Bearer ${authToken}`
+    let res;
+    let networkError;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        res = await fetch(`${API_URL}/protected/devices`, {
+          headers: {
+            'Authorization': `Bearer ${authToken}`
+          }
+        });
+        break;
+      } catch (err) {
+        networkError = err;
+        if (attempt === 0) {
+          await new Promise(resolve => setTimeout(resolve, 700));
+        }
       }
-    });
+    }
+
+    if (!res) {
+      throw new Error(networkError?.message || 'Gagal menghubungi backend perangkat');
+    }
     
     if (res.status === 401) {
       this.logout();
