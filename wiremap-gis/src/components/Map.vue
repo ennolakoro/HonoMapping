@@ -148,6 +148,16 @@ const refreshMapAndLoadDevices = async () => {
   await loadDevices()
 }
 
+const normalizeSavedDevice = (device) => {
+  if (!device) return null
+  return {
+    ...device,
+    parentId: device.parentId ?? device.parent_id ?? null,
+    portsCount: device.portsCount ?? device.ports_count ?? null,
+    cablePath: device.cablePath ?? device.cable_path ?? null
+  }
+}
+
 const fitMapToDevicesOnce = (devices) => {
   if (!map || hasAutoFittedDevices) return
   const points = devices
@@ -184,6 +194,27 @@ const updateMapDataStatus = (devices, error = '') => {
       second: '2-digit'
     })
   }
+}
+
+const handleDeviceSaved = async (event) => {
+  const saved = normalizeSavedDevice(event.detail)
+  if (!saved?.id) {
+    await refreshMapAndLoadDevices()
+    return
+  }
+
+  const existingIndex = allDevicesData.value.findIndex(device => device.id === saved.id && device.type === saved.type)
+  const nextDevices = [...allDevicesData.value]
+  if (existingIndex >= 0) nextDevices.splice(existingIndex, 1, saved)
+  else nextDevices.push(saved)
+  allDevicesData.value = nextDevices
+
+  if (hasCoords(saved) && map) {
+    map.invalidateSize({ animate: false })
+    map.setView([Number(saved.lat), Number(saved.lng)], Math.max(map.getZoom(), 18), { animate: false })
+  }
+
+  await loadDevices()
 }
 
 const handleDocClickForSearch = (e) => {
@@ -1051,7 +1082,7 @@ const loadDevices = async () => {
     // 1. Parsing awal semua koordinat kabel ke dalam memori
     const devicePaths = {}
     devices.forEach(device => {
-      if (device.parentId && deviceMap[device.parentId]) {
+      if (device.parentId && deviceMap[device.parentId] && hasCoords(device)) {
         const parent = deviceMap[device.parentId]
         if (hasCoords(parent)) {
           let latlngs = []
@@ -1062,13 +1093,18 @@ const loadDevices = async () => {
               console.error("Failed to parse cablePath for", device.name, e)
             }
           }
-          if (!latlngs || !latlngs.length) {
+          if (!Array.isArray(latlngs) || !latlngs.length) {
             latlngs = [
-              [parent.lat, parent.lng],
-              [device.lat, device.lng]
+              [Number(parent.lat), Number(parent.lng)],
+              [Number(device.lat), Number(device.lng)]
             ]
           }
-          devicePaths[device.id] = latlngs
+          const validPath = latlngs.every(point => {
+            const lat = Number(point?.lat ?? point?.[0])
+            const lng = Number(point?.lng ?? point?.[1])
+            return Number.isFinite(lat) && Number.isFinite(lng)
+          })
+          if (validPath) devicePaths[device.id] = latlngs
         }
       }
     })
@@ -1575,6 +1611,7 @@ onMounted(() => {
   window.addEventListener('sync-mikrotik', triggerSync)
   window.addEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
   window.addEventListener('wiremap-map-visible', refreshMapAndLoadDevices)
+  window.addEventListener('device-saved', handleDeviceSaved)
   
   document.addEventListener('click', handleDocClickForSearch)
   startAutoRefresh()
@@ -1598,6 +1635,7 @@ onUnmounted(() => {
   window.removeEventListener('sync-mikrotik', triggerSync)
   window.removeEventListener('open-provisioning-queue', handleOpenProvisioningQueue)
   window.removeEventListener('wiremap-map-visible', refreshMapAndLoadDevices)
+  window.removeEventListener('device-saved', handleDeviceSaved)
 })
 
 watch(unmappedClients, (clients) => {
