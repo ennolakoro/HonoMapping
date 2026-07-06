@@ -268,12 +268,49 @@ export const api = {
       },
       body: JSON.stringify(settingsData)
     });
+    const data = await res.json().catch(() => ({}));
     if (res.status === 401) {
       this.logout();
       throw new Error('Sesi berakhir');
     }
-    if (!res.ok) throw new Error('Gagal menyimpan konfigurasi');
-    return res.json();
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal menyimpan konfigurasi');
+    return data;
+  },
+
+  async testSettings(settingsData) {
+    const res = await fetch(`${API_URL}/protected/settings/test`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${authToken}`
+      },
+      body: JSON.stringify(settingsData)
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      this.logout();
+      throw new Error('Sesi berakhir');
+    }
+    if (!res.ok || data.connected === false) {
+      throw new Error(data.details || data.error || 'Gagal menguji koneksi Router API');
+    }
+    return data;
+  },
+
+  async clearMap() {
+    const res = await fetch(`${API_URL}/protected/clear-map`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${authToken}`
+      }
+    });
+    const data = await res.json().catch(() => ({}));
+    if (res.status === 401) {
+      this.logout();
+      throw new Error('Sesi berakhir');
+    }
+    if (!res.ok) throw new Error(data.details || data.error || 'Gagal menghapus data peta');
+    return data;
   },
 
   async updateDeviceParent(id, parentId, type) {

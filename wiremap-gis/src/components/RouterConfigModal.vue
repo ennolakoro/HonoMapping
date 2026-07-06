@@ -32,7 +32,7 @@ const fetchSettings = async () => {
       MIKROTIK_PASS: data.MIKROTIK_PASS || ''
     }
     // Jika data sudah diisi, default ke read-only view
-    if (settings.value.MIKROTIK_IP && settings.value.MIKROTIK_USER) {
+    if (settings.value.MIKROTIK_IP && settings.value.MIKROTIK_USER && settings.value.MIKROTIK_PASS) {
       isReadOnly.value = true
     } else {
       isReadOnly.value = false
@@ -50,19 +50,34 @@ watch(() => props.isOpen, (newVal) => {
   }
 })
 
-const handleOpenMap = () => {
-  emit('open-map')
-  emit('close')
+const handleOpenMap = async () => {
+  try {
+    isSaving.value = true
+    errorMessage.value = ''
+    successMessage.value = 'Menguji koneksi Router API...'
+    await api.testSettings(settings.value)
+    successMessage.value = 'Koneksi berhasil. Membuka peta...'
+    emit('open-map')
+    setTimeout(() => {
+      successMessage.value = ''
+      emit('close')
+    }, 500)
+  } catch (err) {
+    successMessage.value = ''
+    errorMessage.value = 'Koneksi Router API gagal: ' + err.message
+  } finally {
+    isSaving.value = false
+  }
 }
 
 const handleDeleteSettings = async () => {
-  if (!confirm('Apakah Anda yakin ingin menghapus konfigurasi Router API? Peta akan dinonaktifkan.')) return
+  if (!confirm('Apakah Anda yakin ingin menghapus konfigurasi Router API? Semua data perangkat, client, dan jalur kabel pada peta juga akan dihapus.')) return
   try {
     isSaving.value = true
     errorMessage.value = ''
     successMessage.value = ''
-    
-    // Kirim objek kosong ke backend untuk menghapus
+
+    await api.clearMap()
     await api.saveSettings({
       MIKROTIK_IP: '',
       MIKROTIK_USER: '',
@@ -75,7 +90,7 @@ const handleDeleteSettings = async () => {
       MIKROTIK_PASS: ''
     }
     
-    successMessage.value = 'Konfigurasi berhasil dihapus.'
+    successMessage.value = 'Konfigurasi dan data peta berhasil dihapus.'
     isReadOnly.value = false
     emit('settings-deleted')
     
@@ -96,7 +111,7 @@ const saveSettings = async () => {
     errorMessage.value = ''
     successMessage.value = ''
     await api.saveSettings(settings.value)
-    successMessage.value = 'Konfigurasi Mikrotik berhasil disimpan!'
+    successMessage.value = 'Koneksi berhasil dan konfigurasi Mikrotik disimpan!'
     emit('saved')
     setTimeout(() => {
       isReadOnly.value = true
@@ -172,12 +187,7 @@ const handleRestoreMap = async (event) => {
         restoreMessage.value = 'Membersihkan data peta saat ini...'
         
         // 1. Bersihkan database menggunakan API clear
-        const clearRes = await fetch(`${window.__BACKEND_URL__ || 'http://127.0.0.1:8787'}/api/clear`, {
-          method: 'POST'
-        })
-        if (!clearRes.ok) {
-          throw new Error('Gagal membersihkan data lama sebelum restore.')
-        }
+        await api.clearMap()
         
         // 2. Urutkan perangkat secara hirarki: OLT -> ODC -> ODP -> CLIENT
         const typeOrder = { 'OLT': 1, 'ODC': 2, 'ODP': 3, 'CLIENT': 4 }
@@ -260,9 +270,9 @@ const handleRestoreMap = async (event) => {
         <!-- Tampilan A: Mode Read-Only (Jika Data Sudah Tersimpan) -->
         <div v-if="isReadOnly" class="flex flex-col gap-5">
           <!-- Banner Deskripsi Sukses -->
-          <div class="bg-green-500 bg-opacity-5 p-3 rounded-lg border border-green-500 border-opacity-20 text-xs text-green-600 leading-relaxed flex gap-2.5">
-            <span class="material-symbols-outlined text-green-600 text-[18px] flex-shrink-0">check_circle</span>
-            <span>Konfigurasi Router API Mikrotik terdeteksi aktif di sistem database.</span>
+          <div class="bg-primary bg-opacity-5 p-3 rounded-lg border border-primary border-opacity-20 text-xs text-on-surface-variant leading-relaxed flex gap-2.5">
+            <span class="material-symbols-outlined text-primary text-[18px] flex-shrink-0">lan</span>
+            <span>Konfigurasi tersimpan. Koneksi Router API akan diuji langsung sebelum peta dibuka.</span>
           </div>
 
           <!-- Data Summary -->
@@ -293,9 +303,9 @@ const handleRestoreMap = async (event) => {
 
           <!-- Actions: Open, Edit, Hapus -->
           <div class="flex flex-col gap-2.5 mt-2">
-            <button @click="handleOpenMap" class="w-full py-2.5 bg-primary hover:bg-primary-fixed text-white font-bold rounded-lg hover:opacity-90 shadow-sm text-sm transition-all flex items-center justify-center gap-2 cursor-pointer border-0">
-              <span class="material-symbols-outlined text-sm">map</span>
-              Open (Buka Peta)
+            <button @click="handleOpenMap" :disabled="isSaving" class="w-full py-2.5 bg-primary hover:bg-primary-fixed text-white font-bold rounded-lg hover:opacity-90 shadow-sm text-sm transition-all flex items-center justify-center gap-2 cursor-pointer border-0 disabled:opacity-50">
+              <span class="material-symbols-outlined text-sm" :class="{ 'animate-spin': isSaving }">{{ isSaving ? 'refresh' : 'map' }}</span>
+              {{ isSaving ? 'Menguji Koneksi...' : 'Open (Buka Peta)' }}
             </button>
             
             <div class="flex gap-2">

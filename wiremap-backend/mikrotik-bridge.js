@@ -13,12 +13,25 @@ let secretCache = null;
 const QUERY_TIMEOUT_MS = parseInt(process.env.MIKROTIK_QUERY_TIMEOUT_MS || '35000', 10);
 
 // Helper function to extract IP and Port from MIKROTIK_IP
-function getMikrotikHostInfo() {
-    const rawIp = process.env.MIKROTIK_IP || '';
+function getMikrotikHostInfo(rawIp = process.env.MIKROTIK_IP || '') {
     const parts = rawIp.split(':');
     return {
         host: parts[0] || '',
         port: parts.length > 1 ? parseInt(parts[1], 10) : 8728
+    };
+}
+
+function getRouterConfig(req) {
+    const rawIp = req.get('x-wiremap-mikrotik-ip') || process.env.MIKROTIK_IP || '';
+    const user = req.get('x-wiremap-mikrotik-user') || process.env.MIKROTIK_USER;
+    const password = req.get('x-wiremap-mikrotik-pass') || process.env.MIKROTIK_PASS;
+    const hostInfo = getMikrotikHostInfo(rawIp);
+    return {
+        ...hostInfo,
+        user,
+        password,
+        cacheKey: `${hostInfo.host}:${hostInfo.port}:${user || ''}`,
+        noCache: req.get('x-wiremap-no-cache') === '1'
     };
 }
 
@@ -30,27 +43,26 @@ function withTimeout(promise, ms, message) {
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-function createRouterClient() {
-    const { host, port } = getMikrotikHostInfo();
+function createRouterClient(config) {
+    const { host, port, user, password } = config;
     return new RouterOSClient({
         host,
-        user: process.env.MIKROTIK_USER,
-        password: process.env.MIKROTIK_PASS,
+        user,
+        password,
         port,
         timeout: parseInt(process.env.MIKROTIK_API_TIMEOUT || '30', 10)
     });
 }
 
 app.get('/active', async (req, res) => {
-    const { host, port } = getMikrotikHostInfo();
-    const user = process.env.MIKROTIK_USER;
-    const password = process.env.MIKROTIK_PASS;
+    const config = getRouterConfig(req);
+    const { host, port, user, password, noCache, cacheKey } = config;
 
     if (!host || !user || !password) {
         return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
     }
 
-    const api = createRouterClient();
+    const api = createRouterClient(config);
 
     api.on('error', (err) => {
         console.log('RouterOS Error:', err.message);
@@ -83,12 +95,12 @@ app.get('/active', async (req, res) => {
         }));
 
         console.log(`Berhasil mendapatkan ${formatted.length} client aktif.`);
-        activeCache = { data: formatted, updatedAt: Date.now() };
+        activeCache = { data: formatted, updatedAt: Date.now(), cacheKey };
         res.json(formatted);
     } catch (err) {
         console.error('Gagal menghubungi Mikrotik:', err);
         await api.close().catch(() => {});
-        if (activeCache) {
+        if (!noCache && activeCache && activeCache.cacheKey === cacheKey) {
             console.warn(`Menggunakan cache PPPoE active (${activeCache.data.length} record). Umur cache ${Math.round((Date.now() - activeCache.updatedAt) / 1000)} detik.`);
             res.set('X-Bridge-Cache', 'stale');
             return res.json(activeCache.data);
@@ -98,15 +110,14 @@ app.get('/active', async (req, res) => {
 });
 
 app.get('/ppp-secrets', async (req, res) => {
-    const { host, port } = getMikrotikHostInfo();
-    const user = process.env.MIKROTIK_USER;
-    const password = process.env.MIKROTIK_PASS;
+    const config = getRouterConfig(req);
+    const { host, port, user, password, cacheKey } = config;
 
     if (!host || !user || !password) {
         return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
     }
 
-    const api = createRouterClient();
+    const api = createRouterClient(config);
     api.on('error', (err) => console.log('RouterOS Error:', err.message));
 
     try {
@@ -132,12 +143,12 @@ app.get('/ppp-secrets', async (req, res) => {
             comment: item.comment || ''
         }));
 
-        secretCache = { data: formatted, updatedAt: Date.now() };
+        secretCache = { data: formatted, updatedAt: Date.now(), cacheKey };
         res.json(formatted);
     } catch (err) {
         console.error('Gagal mengambil PPP secret:', err);
         await api.close().catch(() => {});
-        if (secretCache) {
+        if (secretCache && secretCache.cacheKey === cacheKey) {
             console.warn(`Menggunakan cache PPP secret (${secretCache.data.length} record). Umur cache ${Math.round((Date.now() - secretCache.updatedAt) / 1000)} detik.`);
             res.set('X-Bridge-Cache', 'stale');
             return res.json(secretCache.data);
@@ -151,7 +162,8 @@ app.post('/trigger-modem', async (req, res) => {
     const { ip, connectionRequestUrl, cwmpUser, cwmpPass } = req.body;
     if (!ip) return res.status(400).json({ error: 'IP Modem tidak diberikan' });
 
-    const { host, port } = getMikrotikHostInfo();
+    const config = getRouterConfig(req);
+    const { host, port } = config;
 
     res.status(202).json({ success: true, queued: true, message: `Trigger modem ${ip} masuk antrian bridge` });
 
@@ -179,7 +191,7 @@ app.post('/trigger-modem', async (req, res) => {
         }
 
         // --- Metode 2: Via Mikrotik /tool/fetch (RouterOS v6 kompatibel) ---
-        const api = createRouterClient();
+        const api = createRouterClient(config);
         api.on('error', (err) => console.log('RouterOS Error:', err.message));
 
         try {
@@ -220,15 +232,14 @@ app.post('/trigger-modem', async (req, res) => {
 // Digunakan backend untuk mendeteksi modem yang tidak punya PPPoE (tipe HOTSPOT)
 // Logika klasifikasi: MAC ada di PPPoE active = PPPoE, tidak ada = HOTSPOT
 app.get('/dhcp-leases', async (req, res) => {
-    const { host, port } = getMikrotikHostInfo();
-    const user = process.env.MIKROTIK_USER;
-    const password = process.env.MIKROTIK_PASS;
+    const config = getRouterConfig(req);
+    const { host, port, user, password, cacheKey } = config;
 
     if (!host || !user || !password) {
         return res.status(500).json({ error: 'Kredensial Mikrotik di .dev.vars tidak lengkap' });
     }
 
-    const api = createRouterClient();
+    const api = createRouterClient(config);
     api.on('error', (err) => console.log('RouterOS Error:', err.message));
 
     try {
@@ -261,12 +272,12 @@ app.get('/dhcp-leases', async (req, res) => {
         // Hanya kirim yang aktif (status = 'bound')
         const active = formatted.filter(l => l.status === 'bound');
         console.log(`Berhasil mendapatkan ${active.length} DHCP lease aktif dari total ${formatted.length}.`);
-        dhcpCache = { data: active, updatedAt: Date.now() };
+        dhcpCache = { data: active, updatedAt: Date.now(), cacheKey };
         res.json(active);
     } catch (err) {
         console.error('Gagal mengambil DHCP lease dari Mikrotik:', err);
         await api.close().catch(() => {});
-        if (dhcpCache) {
+        if (dhcpCache && dhcpCache.cacheKey === cacheKey) {
             console.warn(`Menggunakan cache DHCP lease (${dhcpCache.data.length} record). Umur cache ${Math.round((Date.now() - dhcpCache.updatedAt) / 1000)} detik.`);
             res.set('X-Bridge-Cache', 'stale');
             return res.json(dhcpCache.data);

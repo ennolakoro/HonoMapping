@@ -1394,12 +1394,51 @@ async function getEnv(c: any, db: any) {
   }
   
   const env = c.env || {};
+  const settingOrEnv = (key: 'MIKROTIK_IP' | 'MIKROTIK_USER' | 'MIKROTIK_PASS' | 'MIKROTIK_BRIDGE_URL') => {
+    if (Object.prototype.hasOwnProperty.call(dbSettings, key)) return dbSettings[key]
+    return env[key] || (typeof process !== 'undefined' ? process.env[key] : '')
+  }
+
   return {
-    MIKROTIK_IP: dbSettings.MIKROTIK_IP || env.MIKROTIK_IP || (typeof process !== 'undefined' ? process.env.MIKROTIK_IP : ''),
-    MIKROTIK_USER: dbSettings.MIKROTIK_USER || env.MIKROTIK_USER || (typeof process !== 'undefined' ? process.env.MIKROTIK_USER : ''),
-    MIKROTIK_PASS: dbSettings.MIKROTIK_PASS || env.MIKROTIK_PASS || (typeof process !== 'undefined' ? process.env.MIKROTIK_PASS : ''),
-    MIKROTIK_BRIDGE_URL: dbSettings.MIKROTIK_BRIDGE_URL || env.MIKROTIK_BRIDGE_URL || (typeof process !== 'undefined' ? process.env.MIKROTIK_BRIDGE_URL : '')
+    MIKROTIK_IP: settingOrEnv('MIKROTIK_IP'),
+    MIKROTIK_USER: settingOrEnv('MIKROTIK_USER'),
+    MIKROTIK_PASS: settingOrEnv('MIKROTIK_PASS'),
+    MIKROTIK_BRIDGE_URL: settingOrEnv('MIKROTIK_BRIDGE_URL')
   };
+}
+
+const resolveRuntimeBridgeUrl = (c: any) => (
+  c.env?.MIKROTIK_BRIDGE_URL ||
+  (typeof process !== 'undefined' ? process.env.MIKROTIK_BRIDGE_URL : '') ||
+  ''
+)
+
+const buildRouterSettingsPayload = (body: any, c: any) => ({
+  MIKROTIK_IP: String(body?.MIKROTIK_IP || '').trim(),
+  MIKROTIK_USER: String(body?.MIKROTIK_USER || '').trim(),
+  MIKROTIK_PASS: String(body?.MIKROTIK_PASS || ''),
+  MIKROTIK_BRIDGE_URL: String(body?.MIKROTIK_BRIDGE_URL || resolveRuntimeBridgeUrl(c)).trim()
+})
+
+async function testRouterApiConnection(c: any, body: any) {
+  const payload = buildRouterSettingsPayload(body, c)
+  if (!payload.MIKROTIK_IP || !payload.MIKROTIK_USER || !payload.MIKROTIK_PASS) {
+    throw new Error('IP Router, Username API, dan Password API wajib diisi.')
+  }
+
+  const active = await getPppoeActive(
+    payload.MIKROTIK_IP,
+    payload.MIKROTIK_USER,
+    payload.MIKROTIK_PASS,
+    payload.MIKROTIK_BRIDGE_URL,
+    8000,
+    true
+  )
+
+  return {
+    ...payload,
+    activeCount: Array.isArray(active) ? active.length : 0
+  }
 }
 
 // Endpoint untuk memeriksa progress sinkronisasi modem secara real-time
@@ -2513,6 +2552,18 @@ app.post('/api/clear', async (c) => {
   }
 })
 
+// Endpoint protected untuk mengosongkan data peta dari menu konfigurasi router.
+app.post('/api/protected/clear-map', async (c) => {
+  try {
+    const db = getDb(c.env)
+    await db.delete(clients)
+    await db.delete(devices)
+    return c.json({ success: true, message: "Semua data perangkat dan client berhasil dihapus dari Peta." })
+  } catch (err: any) {
+    return c.json({ error: 'Gagal menghapus data peta', details: err.message }, 500)
+  }
+})
+
 // GET Router Settings
 app.get('/api/protected/settings', async (c) => {
   const db = getDb(c.env)
@@ -2528,12 +2579,43 @@ app.get('/api/protected/settings', async (c) => {
   }
 })
 
+// POST Test Router Settings tanpa mempercayai konfigurasi yang tersimpan di DB.
+app.post('/api/protected/settings/test', async (c) => {
+  try {
+    const body = await c.req.json()
+    const result = await testRouterApiConnection(c, body)
+    return c.json({
+      success: true,
+      connected: true,
+      activeCount: result.activeCount,
+      message: `Koneksi Router API berhasil. PPPoE aktif terbaca: ${result.activeCount}.`
+    })
+  } catch (e: any) {
+    return c.json({
+      success: false,
+      connected: false,
+      error: 'Gagal koneksi Router API',
+      details: e.message || String(e)
+    }, 502)
+  }
+})
+
 // POST Router Settings (Save/Update)
 app.post('/api/protected/settings', async (c) => {
   const db = getDb(c.env)
   const body = await c.req.json()
   
   try {
+    const isDeletingSettings =
+      body.MIKROTIK_IP !== undefined &&
+      String(body.MIKROTIK_IP || '').trim() === '' &&
+      String(body.MIKROTIK_USER || '').trim() === '' &&
+      String(body.MIKROTIK_PASS || '') === ''
+
+    if (!isDeletingSettings) {
+      await testRouterApiConnection(c, body)
+    }
+
     const keys = ['MIKROTIK_IP', 'MIKROTIK_USER', 'MIKROTIK_PASS', 'MIKROTIK_BRIDGE_URL']
     for (const key of keys) {
       if (body[key] !== undefined) {
@@ -2546,9 +2628,9 @@ app.post('/api/protected/settings', async (c) => {
         })
       }
     }
-    return c.json({ success: true, message: 'Konfigurasi Mikrotik berhasil disimpan' })
+    return c.json({ success: true, message: isDeletingSettings ? 'Konfigurasi Mikrotik berhasil dihapus' : 'Koneksi berhasil dan konfigurasi Mikrotik disimpan' })
   } catch (e: any) {
-    return c.json({ error: 'Gagal menyimpan konfigurasi', details: e.message }, 500)
+    return c.json({ error: 'Gagal menyimpan konfigurasi', details: e.message }, 502)
   }
 })
 

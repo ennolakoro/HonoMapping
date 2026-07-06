@@ -12,6 +12,7 @@ const isRouterModalOpen = ref(false)
 const isRouterConfigured = ref(false)
 const isValidatingSettings = ref(false)
 const queueCount = ref(0)
+const routerValidationError = ref('')
 
 const handleQueueCount = (event) => {
   queueCount.value = event.detail?.count || 0
@@ -37,22 +38,24 @@ const handleOpenRouterSettings = () => {
   isRouterModalOpen.value = true
 }
 
-const checkConnectionSettings = async () => {
+const checkConnectionSettings = async ({ openOnSuccess = false } = {}) => {
   try {
     isValidatingSettings.value = true
+    routerValidationError.value = ''
     const settings = await api.getSettings()
     if (!settings.MIKROTIK_IP || !settings.MIKROTIK_USER || !settings.MIKROTIK_PASS) {
       isRouterModalOpen.value = true
       isRouterConfigured.value = false
     } else {
-      // Jika sudah ada konfigurasi yang tersimpan, biarkan peta kosong secara default saat login
-      isRouterConfigured.value = false
+      await api.testSettings(settings)
+      isRouterConfigured.value = openOnSuccess
       isRouterModalOpen.value = false
     }
   } catch (err) {
     if (err.message === 'Sesi berakhir' || err.message?.includes('Unauthorized')) {
       handleLogout()
     } else {
+      routerValidationError.value = err.message || 'Koneksi Router API gagal.'
       isRouterModalOpen.value = true
       isRouterConfigured.value = false
     }
@@ -64,6 +67,21 @@ const checkConnectionSettings = async () => {
 const handleLoginSuccess = () => {
   isLoggedIn.value = true
   checkConnectionSettings()
+}
+
+const handleSettingsSaved = () => {
+  checkConnectionSettings({ openOnSuccess: true })
+}
+
+const handleOpenMap = () => {
+  isRouterConfigured.value = true
+  routerValidationError.value = ''
+}
+
+const handleSettingsDeleted = () => {
+  isRouterConfigured.value = false
+  routerValidationError.value = ''
+  window.dispatchEvent(new CustomEvent('refresh-map'))
 }
 
 const handleLogout = () => {
@@ -128,6 +146,9 @@ const handleSaveDevice = async (deviceData) => {
           <p class="text-slate-400 text-xs mt-2 leading-relaxed">
             Peta topologi dinonaktifkan secara default saat Anda login. Silakan kelola konfigurasi Router API Anda untuk memuat visualisasi rute kabel secara real-time.
           </p>
+          <p v-if="routerValidationError" class="text-red-300 text-xs mt-3 leading-relaxed">
+            {{ routerValidationError }}
+          </p>
         </div>
         <button @click="isRouterModalOpen = true" class="bg-blue-600 hover:bg-blue-500 text-white font-bold px-6 py-2.5 rounded-xl shadow-lg transition-all flex items-center gap-2 border-0 cursor-pointer text-xs">
           <span class="material-symbols-outlined text-xs">settings_ethernet</span>
@@ -141,9 +162,9 @@ const handleSaveDevice = async (deviceData) => {
     <RouterConfigModal
       :is-open="isRouterModalOpen"
       @close="isRouterModalOpen = false"
-      @saved="checkConnectionSettings"
-      @open-map="isRouterConfigured = true"
-      @settings-deleted="isRouterConfigured = false"
+      @saved="handleSettingsSaved"
+      @open-map="handleOpenMap"
+      @settings-deleted="handleSettingsDeleted"
     />
   </template>
 </template>

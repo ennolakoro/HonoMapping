@@ -22,19 +22,36 @@ const BRIDGE_READ_TIMEOUT_MS = parseInt(
   10
 );
 
+function getBridgeHeaders(mikrotikIp: string, user: string, pass: string, extra: Record<string, string> = {}) {
+  return {
+    'x-wiremap-mikrotik-ip': mikrotikIp || '',
+    'x-wiremap-mikrotik-user': user || '',
+    'x-wiremap-mikrotik-pass': pass || '',
+    ...extra
+  };
+}
+
 /**
  * Mengambil daftar PPPoE Active dari Mikrotik.
  */
-export async function getPppoeActive(mikrotikIp: string, user: string, pass: string, bridgeUrl?: string): Promise<any[]> {
+export async function getPppoeActive(
+  mikrotikIp: string,
+  user: string,
+  pass: string,
+  bridgeUrl?: string,
+  timeoutMs = BRIDGE_READ_TIMEOUT_MS,
+  noCache = false
+): Promise<any[]> {
   // Karena Mikrotik V6 tidak punya REST API, kita pakai Bridge yang ditentukan atau default ke port 3005
   const url = `${bridgeUrl || 'http://127.0.0.1:3005'}/active`;
   
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), BRIDGE_READ_TIMEOUT_MS);
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const response = await fetch(url, {
       method: 'GET',
+      headers: getBridgeHeaders(mikrotikIp, user, pass, noCache ? { 'x-wiremap-no-cache': '1' } : {}),
       signal: controller.signal
     });
     
@@ -49,7 +66,7 @@ export async function getPppoeActive(mikrotikIp: string, user: string, pass: str
   } catch (error: any) {
     clearTimeout(timeoutId);
     if (error.name === 'AbortError' || error.message.includes('abort')) {
-      throw new Error(`Timeout ${Math.round(BRIDGE_READ_TIMEOUT_MS / 1000)} detik membaca PPPoE active dari bridge. Pastikan bridge berjalan dan API RouterOS port 8728 bisa diakses.`);
+      throw new Error(`Timeout ${Math.round(timeoutMs / 1000)} detik membaca PPPoE active dari bridge. Pastikan bridge berjalan dan API RouterOS port 8728 bisa diakses.`);
     }
     console.error("Gagal menarik data PPPoE:", error);
     throw error;
@@ -69,6 +86,7 @@ export async function getPppoeSecrets(mikrotikIp: string, user: string, pass: st
   try {
     const response = await fetch(url, {
       method: 'GET',
+      headers: getBridgeHeaders(mikrotikIp, user, pass),
       signal: controller.signal
     });
 
@@ -108,6 +126,7 @@ export async function getDhcpLeases(
   try {
     const response = await fetch(url, {
       method: 'GET',
+      headers: getBridgeHeaders(mikrotikIp, user, pass),
       signal: controller.signal
     });
     clearTimeout(timeoutId);
@@ -152,7 +171,10 @@ export async function triggerModemCWMP(
   try {
     const response = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...getBridgeHeaders(mikrotikIp, user, pass)
+      },
       body: JSON.stringify({
         ip: modemIp,
         connectionRequestUrl: connectionRequestUrl || null,
