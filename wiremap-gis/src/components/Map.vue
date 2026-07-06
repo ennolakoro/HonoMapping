@@ -933,15 +933,30 @@ const deleteDevice = async (device) => {
 }
 
 const loadDevices = async () => {
+  console.log('[DEBUG FRONTEND] Memulai pemanggilan api.getDevices() ke backend...');
   try {
     const devices = await api.getDevices()
+    console.log('[DEBUG FRONTEND] Respons dari api.getDevices() diterima:', devices);
+    
     if (!Array.isArray(devices)) {
+      console.error('[DEBUG FRONTEND] Data dari server bukan array!', devices);
       throw new Error('Data perangkat yang diterima dari server tidak valid (bukan array).');
     }
     
+    console.log(`[DEBUG FRONTEND] Berhasil memuat ${devices.length} perangkat dari server.`);
+    
     // Deteksi transisi status online -> offline (atau pemulihan) untuk log gangguan & alarm suara
     const isFirstLoad = Object.keys(previousOnlineStatuses).length === 0
-    devices.forEach(device => {
+    devices.forEach((device, index) => {
+      console.log(`[DEBUG FRONTEND] Perangkat #${index} ->`, {
+        id: device.id,
+        name: device.name,
+        type: device.type,
+        lat: device.lat,
+        lng: device.lng,
+        hasCoords: hasCoords(device)
+      });
+
       if (device.type === 'CLIENT') {
         const currentOnline = device.isOnline
         const prevOnline = previousOnlineStatuses[device.id]

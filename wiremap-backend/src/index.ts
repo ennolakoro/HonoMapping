@@ -1976,7 +1976,9 @@ app.get('/api/protected/devices', async (c) => {
   try {
     const db = getDb(c.env)
     await ensureClientInventoryColumns(db)
-    await cleanupOldGarbageData(db)
+    cleanupOldGarbageData(db).catch(err => {
+      console.error('[Cleanup] Background cleanup error:', err)
+    })
     const allDevices = await db.select().from(devices)
     const allClients = await db.select().from(clients)
 

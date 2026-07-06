@@ -107,18 +107,21 @@ const openProvisioningQueue = () => {
 }
 
 const handleSaveDevice = async (deviceData) => {
+  console.log('[DEBUG FRONTEND] handleSaveDevice dipicu dengan data:', deviceData)
   try {
     const payload = {
       ...deviceData,
       cablePath: store.pendingCablePath ? JSON.stringify(store.pendingCablePath) : null
     }
+    console.log('[DEBUG FRONTEND] Mengirim payload addDevice ke API:', payload)
     const res = await api.addDevice(payload)
-    console.log('Device Saved: ', res)
+    console.log('[DEBUG FRONTEND] Berhasil menyimpan perangkat. Respon server:', res)
     window.dispatchEvent(new CustomEvent('refresh-map'))
     if (deviceData.syncAfterSave) {
       window.dispatchEvent(new CustomEvent('sync-mikrotik'))
     }
   } catch (err) {
+    console.error('[DEBUG FRONTEND] Gagal menyimpan perangkat ke database:', err)
     alert('Gagal menyimpan perangkat: ' + err.message)
   }
 }
