@@ -136,7 +136,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, createSetPeriodicInform, igdBaseParams, deviceBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
+import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, createSetPeriodicInform, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -309,6 +309,8 @@ interface CwmpSession {
   currentModemProfile: string | null;
   currentRequestMode: 'inform' | 'discover-wan' | 'config';
   gponFaultRetried: boolean;
+  parameterFaultRetried?: boolean;
+  discoveryRootRetried?: boolean;
   updatedAt: number;
   // Multi-stage host fetching
   stage: 'params' | 'wan_names' | 'host_names' | 'host_values' | 'done' | 'discover_params' | 'set_periodic_inform';
@@ -404,6 +406,12 @@ const requestWanValuesFromDiscoveredParams = (session: CwmpSession) => {
   session.updatedAt = Date.now()
   console.log(`[CWMP] Discovery WAN values dimulai untuk ${session.currentModemSN}: ${params.length} parameter`)
   return createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, params)
+}
+
+const getDiscoveryRootPath = (session: CwmpSession, alternate = false) => {
+  const prefersDevice = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
+  const useDevice = alternate ? !prefersDevice : prefersDevice
+  return useDevice ? 'Device.' : 'InternetGatewayDevice.'
 }
 
 const getWanPppAddObjectCandidates = (profile?: string | null) => {
@@ -732,6 +740,29 @@ const finishCwmpUsingCachedData = (session: CwmpSession, clientIp: string, warni
   if (warning) console.warn(`[CWMP] ${warning}`)
 }
 
+const hasUsefulModemData = (params: any) => Boolean(params && (
+  Object.keys(params.rawParams || {}).length > 0 ||
+  (Array.isArray(params.wanConfig) && params.wanConfig.length > 0) ||
+  params.ssid ||
+  params.ssid5g ||
+  params.rxPower ||
+  params.brand ||
+  params.modelName ||
+  params.macAddress
+))
+
+const savePartialOrUseCache = async (c: any, db: any, session: CwmpSession, clientIp: string, warning: string) => {
+  const params = session.pendingModemData
+  if (hasUsefulModemData(params)) {
+    if (Array.isArray(params.wanConfig) && params.wanConfig.length === 0) {
+      delete params.wanConfig
+    }
+    await saveModemDataToDb(c, db, session, params, clientIp)
+  } else {
+    finishCwmpUsingCachedData(session, clientIp, warning)
+  }
+}
+
 // Endpoint Mini ACS (Terbuka untuk Modem / CPE)
 const cwmpHandler = async (c: any) => {
   const bodyText = await c.req.text()
@@ -970,6 +1001,8 @@ const cwmpHandler = async (c: any) => {
         currentModemProfile: informData.rootDataModel || null,
         currentRequestMode: requestMode,
         gponFaultRetried: false,
+        parameterFaultRetried: false,
+        discoveryRootRetried: false,
         updatedAt: Date.now(),
         stage,
         wanNameRoots: [],
@@ -1205,9 +1238,7 @@ const cwmpHandler = async (c: any) => {
         cwmpSessions.set(sessionKey, session)
 
         if (session.stage === 'discover_params') {
-          const rootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
-            ? 'Device.'
-            : 'InternetGatewayDevice.'
+          const rootPath = getDiscoveryRootPath(session)
           console.log(`[CWMP] Transisi set_periodic_inform -> discover_params. Mengirim GetParameterNames root '${rootPath}'`)
           const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, rootPath, false);
           return new Response(responseXml, {
@@ -1371,6 +1402,12 @@ const cwmpHandler = async (c: any) => {
         const allNames = parseAllParameterNamesResponse(bodyText)
         const dynamicParams = filterDynamicParameters(allNames)
         console.log(`[CWMP] Discovery parameter dinamis selesai untuk ${session.currentModemSN}. Ditemukan ${dynamicParams.length} parameter dari total ${allNames.length}.`)
+
+        if (dynamicParams.length === 0) {
+          finishCwmpUsingCachedData(session, clientIp, `Discovery parameter untuk ${session.currentModemSN} tidak menemukan leaf yang relevan. Cache lama tetap dipakai.`)
+          cwmpSessions.delete(sessionKey)
+          return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+        }
         
         session.currentParamsToRequest = dynamicParams
         session.stage = 'params'
@@ -1524,9 +1561,7 @@ const cwmpHandler = async (c: any) => {
         cwmpSessions.set(sessionKey, session)
 
         if (session.stage === 'discover_params') {
-          const rootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
-            ? 'Device.'
-            : 'InternetGatewayDevice.'
+          const rootPath = getDiscoveryRootPath(session)
           console.log(`[CWMP] Transisi set_periodic_inform -> discover_params. Mengirim GetParameterNames root '${rootPath}'`)
           const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, rootPath, false);
           return new Response(responseXml, {
@@ -1588,6 +1623,28 @@ const cwmpHandler = async (c: any) => {
           cwmpSessions.delete(sessionKey)
           return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
         }
+      }
+
+      if (faultCode === '9005' && session.stage === 'discover_params') {
+        if (!session.discoveryRootRetried) {
+          session.discoveryRootRetried = true
+          session.updatedAt = Date.now()
+          cwmpSessions.set(sessionKey, session)
+          const alternateRoot = getDiscoveryRootPath(session, true)
+          console.warn(`[CWMP] Discovery root ditolak oleh ${session.currentModemSN}. Mencoba root alternatif '${alternateRoot}'.`)
+          const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, alternateRoot, false)
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
+        await savePartialOrUseCache(c, db, session, clientIp, `Discovery parameter ditolak modem (${faultCode}). Cache lama tetap dipakai.`)
+        cwmpSessions.delete(sessionKey)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
 
       if (faultCode === '9005' && session.stage === 'wan_names') {
@@ -1669,21 +1726,41 @@ const cwmpHandler = async (c: any) => {
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
       
-      if (faultCode === '9005' && !session.gponFaultRetried && session.currentModemSN) {
-        session.gponFaultRetried = true;
-        session.updatedAt = Date.now()
-        cwmpSessions.set(sessionKey, session)
-        
-        const retryParams = session.currentModemProfile === 'Device' ? deviceBaseParams : igdBaseParams
-        console.log(`[CWMP] Retrying GetParameterValues with safe fallback parameters for ${session.currentModemSN}`)
-        const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, retryParams);
-        return new Response(retryXml, {
-          headers: {
-            'Content-Type': 'text/xml',
-            'Server': 'Hono-MiniACS',
-            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+      if (faultCode === '9005' && session.stage === 'params' && session.currentModemSN) {
+        if (!session.parameterFaultRetried && session.currentRequestMode !== 'config') {
+          session.parameterFaultRetried = true
+          session.gponFaultRetried = true
+          session.stage = 'discover_params'
+          session.currentParamsToRequest = []
+          session.updatedAt = Date.now()
+          cwmpSessions.set(sessionKey, session)
+
+          if (session.currentTriggeredClientId) {
+            try {
+              await db.update(clients)
+                .set({ parameterListJson: null })
+                .where(eq(clients.id, session.currentTriggeredClientId))
+              console.warn(`[CWMP] Cache parameter invalid dihapus untuk clientId=${session.currentTriggeredClientId}.`)
+            } catch (dbErr: any) {
+              console.error(`[CWMP] Gagal menghapus cache parameter invalid:`, dbErr.message)
+            }
           }
-        })
+
+          const rootPath = getDiscoveryRootPath(session)
+          console.warn(`[CWMP] GetParameterValues fault ${faultCode} untuk ${session.currentModemSN}. Discovery ulang parameter valid via '${rootPath}'.`)
+          const retryXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, rootPath, false)
+          return new Response(retryXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+
+        await savePartialOrUseCache(c, db, session, clientIp, `Modem menolak daftar parameter (${faultCode}). Cache lama tetap dipakai.`)
+        cwmpSessions.delete(sessionKey)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
       
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
