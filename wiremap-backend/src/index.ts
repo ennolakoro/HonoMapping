@@ -789,7 +789,7 @@ const cwmpHandler = async (c: any) => {
 
   console.log(`[DEBUG TR-069] cookieHeader: "${cookieHeader}" | cookieSessionId: "${cookieSessionId}" | sessionKey: "${sessionKey}" | sessionFound: ${!!session}`)
 
-  if (bodyText.includes('Inform')) {
+  if (/<(?:\w+:)?Inform\b/i.test(bodyText)) {
     // 1. Terima event Inform dari Modem
     const informData = parseInform(bodyText)
     console.log(`Mini ACS Menerima Inform dari Modem [${clientIp}]:`, informData)
@@ -800,11 +800,10 @@ const cwmpHandler = async (c: any) => {
     if (informData.SerialNumber) {
       sessionKey = informData.SerialNumber
       cwmpSessions.delete(sessionKey)
-      session = null
     } else {
       cwmpSessions.delete(clientIp)
-      session = null
     }
+    session = cwmpSessions.get(sessionKey)
 
     let clientId: number | null = null
     let clientName = informData.SerialNumber ? `ONT-${informData.SerialNumber}` : `ONT-${clientIp}`
