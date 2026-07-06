@@ -105,18 +105,12 @@ const buildDeviceWanParams = () => {
 const adminConfigParams = [
   'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.UserName',
   'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_HW_WebUserInfo.1.Password',
   'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.UserName',
   'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_HW_UserInfo.1.Password',
   'InternetGatewayDevice.UserInterface.X_ZTE-COM_UserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_ZTE-COM_UserInfo.1.Password',
   'InternetGatewayDevice.UserInterface.X_FH_UserInfo.1.UserName',
-  'InternetGatewayDevice.UserInterface.X_FH_UserInfo.1.Password',
   'InternetGatewayDevice.UserInterface.X_ALU-COM_UserInfo.1.Username',
-  'InternetGatewayDevice.UserInterface.X_ALU-COM_UserInfo.1.Password',
   'Device.Users.User.1.Username',
-  'Device.Users.User.1.Password',
 ]
 
 export const igdBaseParams = [
@@ -127,21 +121,17 @@ export const igdBaseParams = [
   'InternetGatewayDevice.DeviceInfo.SoftwareVersion',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID',
   'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.KeyPassphrase',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.PreSharedKey.1.PreSharedKey',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations',
-  'InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.AssociatedDeviceNumberOfEntries',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.MACAddress',
   'InternetGatewayDevice.LANDevice.1.LANEthernetInterfaceConfig.1.Status',
 ]
 
-const deviceBaseParams = [
+export const deviceBaseParams = [
   'Device.DeviceInfo.Manufacturer',
   'Device.DeviceInfo.ModelName',
   'Device.DeviceInfo.ProductClass',
   'Device.DeviceInfo.HardwareVersion',
   'Device.DeviceInfo.SoftwareVersion',
   'Device.WiFi.SSID.1.SSID',
-  'Device.WiFi.AccessPoint.1.AssociatedDeviceNumberOfEntries',
   'Device.Ethernet.Interface.1.MACAddress',
   'Device.Ethernet.Interface.1.Status',
 ]
@@ -202,10 +192,9 @@ export function detectVendor(manufacturer?: string | null, serial?: string | nul
 
 export function buildParameterRequestList(manufacturer?: string | null, serial?: string | null, rootDataModel?: string | null) {
   if (rootDataModel === 'Device') {
-    return uniqueParams([...deviceBaseParams, ...adminConfigParams, ...opticalProfiles.generic])
+    return uniqueParams([...deviceBaseParams, ...adminConfigParams])
   }
-  const vendor = detectVendor(manufacturer, serial)
-  return uniqueParams([...igdBaseParams, ...adminConfigParams, ...(opticalProfiles[vendor] || []), ...opticalProfiles.generic])
+  return uniqueParams([...igdBaseParams, ...adminConfigParams])
 }
 
 export function filterDynamicParameters(names: string[]): string[] {

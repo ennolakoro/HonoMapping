@@ -136,7 +136,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, createSetPeriodicInform, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
+import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, createSetPeriodicInform, igdBaseParams, deviceBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -1672,7 +1672,9 @@ const cwmpHandler = async (c: any) => {
         session.updatedAt = Date.now()
         cwmpSessions.set(sessionKey, session)
         
-        const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, igdBaseParams);
+        const retryParams = session.currentModemProfile === 'Device' ? deviceBaseParams : igdBaseParams
+        console.log(`[CWMP] Retrying GetParameterValues with safe fallback parameters for ${session.currentModemSN}`)
+        const retryXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, retryParams);
         return new Response(retryXml, {
           headers: {
             'Content-Type': 'text/xml',
