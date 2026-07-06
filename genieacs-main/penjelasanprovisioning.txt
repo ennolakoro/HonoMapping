@@ -1,0 +1,134 @@
+===================================================================================================
+ALUR DETAIL PROSES AUTO-PROVISIONING ONT LEWAT PROFILE TR-069 (TANPA REBOOT)
+===================================================================================================
+
+Dokumen ini menjelaskan secara teknis dan detail alur bagaimana sebuah ONT/Modem yang baru saja
+dikonfigurasi profile TR-069-nya melalui OLT, langsung melakukan Auto-Inform (registrasi otomatis)
+ke GenieACS, dieksekusi oleh Script Provisioning, dan terdaftar di halaman Devices UI.
+
+---------------------------------------------------------------------------------------------------
+1. PROSES DI SISI OLT & SINKRONISASI KE ONT (CPE) VIA OMCI
+---------------------------------------------------------------------------------------------------
+- Teknisi/Sistem mengonfigurasi profile TR-069 pada OLT (VLAN TR-069, ACS URL: http://192.168.8.166:7547, serta username & password).
+- OLT mengirimkan konfigurasi WAN TR-069 dan ACS URL tersebut ke ONT menggunakan protokol OMCI 
+  (ONT Management and Control Interface) melalui serat optik secara real-time.
+- ONT langsung menerapkan parameter tersebut ke sistemnya saat itu juga. Interface WAN Management 
+  pada ONT langsung dibuat dan aktif (UP) tanpa memerlukan reboot perangkat.
+
+---------------------------------------------------------------------------------------------------
+2. AUTO-TRIGGER INFORM PADA ONT (STANDAR TR-069 ANNEX A)
+---------------------------------------------------------------------------------------------------
+- Berdasarkan standar CWMP (TR-069), apabila parameter ACS URL (ManagementServer.URL) mengalami 
+  perubahan nilai atau diisi untuk pertama kalinya, ONT harus segera menginisiasi sesi koneksi baru ke ACS.
+- Setelah interface WAN mendapatkan IP address (baik melalui DHCP atau PPPoE Management), ONT langsung
+  mengirimkan HTTP POST (SOAP/XML) permintaan koneksi (Inform) ke GenieACS port 7547.
+- Pesan Inform ini membawa Event Code khusus:
+  * "0 BOOTSTRAP" : Menandakan ONT baru pertama kali terhubung ke alamat ACS URL tersebut.
+  * "4 VALUE CHANGE" : Menandakan ada nilai parameter (yaitu ACS URL) yang baru saja berubah.
+
+---------------------------------------------------------------------------------------------------
+3. PROSES PENERIMAAN DI SISI GENIEACS (ACS - CWMP ENGINE)
+---------------------------------------------------------------------------------------------------
+- Service "genieacs-cwmp" mendengarkan port 7547 menerima HTTP POST Inform dari ONT.
+- GenieACS mencocokkan Serial Number, OUI, dan Product Class untuk mengidentifikasi perangkat.
+- Jika perangkat belum terdaftar di database MongoDB GenieACS (collection "devices"), dokumen baru otomatis dibuat.
+- Begitu tersimpan di database, perangkat akan langsung tampil di menu "Devices" UI GenieACS saat halaman di-reload, tanpa perlu reboot ONT.
+
+---------------------------------------------------------------------------------------------------
+4. KONDISI KETIKA MODEM KELUAR DARI KONDISI HARD RESET (BOOTSTRAP)
+---------------------------------------------------------------------------------------------------
+- Ketika modem di-hard reset, semua konfigurasi kembali ke default pabrik. Begitu modem kembali mendapatkan 
+  ACS URL dan terhubung ke GenieACS untuk pertama kalinya, ia mengirimkan Event Code "0 BOOTSTRAP".
+- Sinyal BOOTSTRAP memicu Preset "bootstrap" yang mengeksekusi Script Provisioning "bootstrap":
+  ```javascript
+  const now = Date.now();
+  // Clear cached data model to force a refresh
+  clear("Device", now);
+  clear("InternetGatewayDevice", now);
+  ```
+- Fungsi `clear()` menghapus seluruh cache data model lama dari database agar GenieACS melakukan pemindaian 
+  ulang (refresh parameter tree) secara bersih dari ONT pada sesi berikutnya.
+
+---------------------------------------------------------------------------------------------------
+5. EVALUASI PRESETS DAN EKSEKUSI PROVISIONING SCRIPT BERJALAN (RUTIN)
+---------------------------------------------------------------------------------------------------
+- Pada setiap sesi Inform (baik bootstrap maupun inform berkala setiap 200 detik), Preset "inform" dan "default" otomatis dieksekusi:
+
+  A. Provision "inform":
+     Menyuntikkan konfigurasi koneksi manajemen ACS (ACS Username & Password) dan mengaktifkan Periodic Inform 
+     dengan interval update 200 detik:
+     ```javascript
+     const informInterval = 200;
+     const AcsUser = "admin";
+     const AcsPass = "acsadmin12345";
+     let ConnReqUser = "admin";
+     const ConnReqPass = "acsadmin12345";
+     // Menerapkan ke parameter management server
+     declare("InternetGatewayDevice.ManagementServer.Username", {value: daily}, {value: AcsUser});
+     declare("InternetGatewayDevice.ManagementServer.Password", {value: daily}, {value: AcsPass});
+     declare("InternetGatewayDevice.ManagementServer.ConnectionRequestUsername", {value: update}, {value: ConnReqUser});
+     declare("InternetGatewayDevice.ManagementServer.ConnectionRequestPassword", {value: update}, {value: ConnReqPass});
+     declare("InternetGatewayDevice.ManagementServer.PeriodicInformEnable", {value: daily}, {value: true});
+     declare("InternetGatewayDevice.ManagementServer.PeriodicInformInterval", {value: daily}, {value: informInterval});
+     ```
+
+  B. Provision "default":
+     * Membaca `DeviceID.Manufacturer` untuk mengidentifikasi merk ONT.
+     * Mengatur akses remote manajemen (ACL SSH, HTTP, Telnet WAN access) agar selalu aktif (UP) pada vendor 
+       tertentu (Huawei, ZTE, FiberHome) sehingga teknisi dapat melakukan remote debugging.
+     * Mendeklarasikan dan memperbarui Virtual Parameters secara berkala (IPTR069, RXPower, gettemp, activedevices, 
+       WlanPassword, getponmode, pppoeMac, pppoePassword, pppoeUsername, pppoeUsername2, PonMac, getSerialNumber, 
+       pppoeIP, getdeviceuptime, getpppuptime).
+
+---------------------------------------------------------------------------------------------------
+6. TAMPILAN DI MENU "DEVICES" (GENIEACS INDEX TABLE)
+---------------------------------------------------------------------------------------------------
+Halaman utama menu Devices menampilkan tabel berisi kolom-kolom informasi berikut:
+1.  **Status** : Menampilkan dot status koneksi perangkat (online/offline) secara real-time.
+2.  **PPP Username** : Menampilkan username PPPoE pelanggan (diambil via `VirtualParameters.pppoeUsername`). Berupa link aktif (device-link) untuk membuka halaman detail modem.
+3.  **Wifi** : Menampilkan SSID WiFi aktif pada ONT (`InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.SSID`).
+4.  **SANDI** : Menampilkan password WiFi aktif (`VirtualParameters.WlanPassword`).
+5.  **Konek** : Menampilkan jumlah perangkat/klien yang sedang terhubung ke WiFi (`InternetGatewayDevice.LANDevice.1.WLANConfiguration.1.TotalAssociations`).
+6.  **RX Power** : Menampilkan kekuatan sinyal optik fiber dalam satuan dBm beserta indikator kekuatan sinyal (`VirtualParameters.RXPower`).
+7.  **IP Wan** : Menampilkan IP WAN PPPoE pelanggan (`VirtualParameters.pppoeIP`) berupa link klik-langsung.
+8.  **Product class** : Menampilkan tipe/model ONT (`DeviceID.ProductClass`).
+9.  **IP TR069** : Menampilkan IP Management TR-069 (`VirtualParameters.IPTR069`) berupa link klik-langsung.
+10. **Uptime** : Menampilkan lama waktu koneksi PPPoE modem aktif (`VirtualParameters.getpppuptime`).
+11. **Software version** : Menampilkan versi firmware ONT (`InternetGatewayDevice.DeviceInfo.SoftwareVersion`).
+12. **Serial number** : Menampilkan Serial Number unik perangkat (`DeviceID.SerialNumber`).
+13. **Last inform** : Menampilkan timestamp terakhir kali ONT menghubungi GenieACS.
+14. **Lokasi** : Menampilkan label lokasi / tag yang tersemat pada perangkat (dapat diedit langsung/writable).
+
+---------------------------------------------------------------------------------------------------
+7. TAMPILAN SAAT DETAIL MODEM DI-KLIK (MULTITAB DEVICE DETAILS)
+---------------------------------------------------------------------------------------------------
+Ketika salah satu modem diklik dari daftar Devices, halaman detail akan menampilkan 6 Tab utama:
+
+1.  **Summary Tab**:
+    * Menampilkan Tags perangkat, fitur uji Ping.
+    * Parameter dasar: Last Inform, Serial Number, Product Class, OUI, Manufacturer, Hardware/Software Version, MAC Address, dan IP Address.
+    * Bagian Faults log untuk memantau error.
+    * Tree "All parameters" untuk melihat dan mengedit seluruh parameter TR-069 secara manual.
+    * Tombol pintas "Device actions" (Reboot, Factory Reset, Push Configuration).
+
+2.  **WAN Tab**:
+    * Menampilkan tabel konfigurasi detail interface WAN PPPoE dan IPoE yang disesuaikan secara dinamis berdasarkan merk ONT (Huawei, ZTE, FiberHome, ALCL, TDTC, ZIONCOM, MONU).
+    * Berisi informasi status koneksi WAN, nama koneksi, VLAN ID, tipe koneksi, service list (INTERNET, TR069, dll), username & password PPPoE, status NAT, serta pemetaan binding LAN/WLAN interface.
+
+3.  **LAN Tab**:
+    * Menampilkan konfigurasi DHCP Server ONT (Enable/Disable).
+    * IP gateway lokal ONT, Subnet Mask, range IP Address DHCP (Start/End DHCP Address), serta DNS Server yang diberikan ke klien lokal.
+
+4.  **WLAN Tab**:
+    * Menampilkan tabel konfigurasi jaringan WiFi (SSID, WiFi Passphrase/password, tipe keamanan/security beacon, BSSID, batas maksimal perangkat terhubung, channel radio, total perangkat terhubung, auto channel enable, dan transmit power).
+    * WiFi Clients Information: Daftar detail klien nirkabel yang terhubung ke SSID 1 & SSID 2 lengkap dengan RSSI (kekuatan sinyal), Client Mode, deskripsi perangkat, IP Address, dan MAC Address.
+    * LAN Hosts: Daftar seluruh host lokal yang terhubung via kabel LAN maupun WiFi.
+
+5.  **USER Tab**:
+    * Menampilkan kredensial akun login Web GUI lokal modem (baik akun Administrator/SuperUser maupun akun User biasa) berdasarkan jenis vendor ONT untuk mempermudah teknisi masuk ke modem secara lokal.
+
+6.  **TR069 Tab**:
+    * Menampilkan status management server TR-069 (CWMP).
+    * Berisi konfigurasi URL ACS, Periodic Inform Enable/Interval, ACS Username/Password, serta Connection Request Username/Password.
+
+===================================================================================================

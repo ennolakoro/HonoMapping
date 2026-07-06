@@ -1,0 +1,14 @@
+﻿[
+    {
+        "_id":  "cwmp-local-cache-hash",
+        "value":  "f7395702719032262d25c331ebc12850",
+        "expire":  "\u003cDate: 1777855369506\u003e",
+        "timestamp":  "\u003cDate: 1777855039506\u003e"
+    },
+    {
+        "_id":  "ui-local-cache-hash",
+        "value":  "6d0ec0869bc9f98a39d433fa67aafe54",
+        "expire":  "\u003cDate: 1777855406207\u003e",
+        "timestamp":  "\u003cDate: 1777855076207\u003e"
+    }
+]

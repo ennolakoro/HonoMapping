@@ -799,7 +799,11 @@ const cwmpHandler = async (c: any) => {
     // Tentukan sessionKey unik menggunakan SerialNumber agar tidak bertabrakan di IP Publik yang sama
     if (informData.SerialNumber) {
       sessionKey = informData.SerialNumber
-      session = cwmpSessions.get(sessionKey)
+      cwmpSessions.delete(sessionKey)
+      session = null
+    } else {
+      cwmpSessions.delete(clientIp)
+      session = null
     }
 
     let clientId: number | null = null
