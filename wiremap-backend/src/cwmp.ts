@@ -796,6 +796,20 @@ ${paramsXml}
 </soap-env:Envelope>`;
 }
 
+export function createSetPeriodicInform(
+  cwmpId: string = '99998', 
+  cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0', 
+  rootDataModel: string = 'InternetGatewayDevice',
+  intervalSeconds: number = 60
+) {
+  const root = rootDataModel === 'Device' ? 'Device' : 'InternetGatewayDevice';
+  const params = [
+    { name: `${root}.ManagementServer.PeriodicInformEnable`, value: 'true', type: 'boolean' },
+    { name: `${root}.ManagementServer.PeriodicInformInterval`, value: String(intervalSeconds), type: 'unsignedInt' }
+  ];
+  return createSetParameterValues(cwmpId, cwmpNamespace, params);
+}
+
 export function createAddObject(
   cwmpId: string = '99996',
   cwmpNamespace: string = 'urn:dslforum-org:cwmp-1-0',

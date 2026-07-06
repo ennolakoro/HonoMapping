@@ -97,6 +97,7 @@ export const clients = sqliteTable("clients", {
   rawModemParamsJson: text("raw_modem_params_json"),
   modemProfile: text("modem_profile"),
   parameterListJson: text("parameter_list_json"),
+  periodicInformConfigured: integer("periodic_inform_configured", { mode: "boolean" }).default(false),
 });
 
 export const settings = sqliteTable("settings", {

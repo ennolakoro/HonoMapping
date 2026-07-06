@@ -2005,8 +2005,8 @@ watch(allDevicesData, (newData) => {
 
           <!-- Baris 3: Lencana Status -->
           <div class="workflow-client-badges">
-            <span class="status-badge" :class="hasCoords(client) ? 'plotted' : 'unmapped'">
-              {{ hasCoords(client) ? 'Done' : 'Pending' }}
+            <span class="status-badge" :class="hasModemData(client) ? 'plotted' : 'unmapped'">
+              {{ hasModemData(client) ? 'Done' : 'Pending' }}
             </span>
           </div>
 

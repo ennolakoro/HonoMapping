@@ -52,6 +52,7 @@ const ensureClientInventoryColumns = async (db: any) => {
     ['raw_modem_params_json', 'text'],
     ['modem_profile', 'text'],
     ['parameter_list_json', 'text'],
+    ['periodic_inform_configured', 'integer'],
   ]
 
   for (const [name, type] of columns) {
@@ -135,7 +136,7 @@ app.post('/api/auth/login', async (c) => {
 })
 
 import { getPppoeActive, getPppoeSecrets, triggerModemCWMP, getDhcpLeases } from './mikrotik'
-import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
+import { buildParameterRequestList, filterDynamicParameters, createInformResponse, createGetParameterValues, createSetParameterValues, createGetParameterNames, createAddObject, createSetPeriodicInform, igdBaseParams, parseInform, parseGetParameterValuesResponse, parseGetParameterNamesResponse, parseHostsFromGetParameterValues, parseAllParameterNamesResponse, filterWanParameterNames, parseAddObjectResponse } from './cwmp'
 import { clients, settings } from './db/schema'
 // Helper untuk mendapatkan IP client CPE secara akurat secara agnostik platform
 const getClientIp = (c: any) => {
@@ -310,7 +311,7 @@ interface CwmpSession {
   gponFaultRetried: boolean;
   updatedAt: number;
   // Multi-stage host fetching
-  stage: 'params' | 'wan_names' | 'host_names' | 'host_values' | 'done' | 'discover_params';
+  stage: 'params' | 'wan_names' | 'host_names' | 'host_values' | 'done' | 'discover_params' | 'set_periodic_inform';
   wanNameRoots?: string[];
   wanDiscoveredParams?: string[];
   pendingModemData?: any; // data dari stage 1 sementara disimpan
@@ -940,7 +941,11 @@ const cwmpHandler = async (c: any) => {
       const existingProgress = getFirstProgress(progressKeys)
       const requestMode = existingProgress?.mode || 'inform'
 
-      if (parameterList.length === 0 && requestMode !== 'config') {
+      const isPeriodicConfigured = !!existingClientRow?.periodicInformConfigured
+      if (!isPeriodicConfigured && requestMode !== 'config') {
+        stage = 'set_periodic_inform'
+        console.log(`[CWMP] Periodic Inform belum terkonfigurasi untuk ${clientName}. Memulai konfigurasi...`)
+      } else if (parameterList.length === 0 && requestMode !== 'config') {
         stage = 'discover_params'
         console.log(`[CWMP] Cache kosong. Discovery parameter dinamis dimulai untuk ${clientName}`)
       } else {
@@ -1073,6 +1078,18 @@ const cwmpHandler = async (c: any) => {
         })
       }
 
+      if (session.stage === 'set_periodic_inform') {
+        console.log(`[CWMP] Mengaktifkan Periodic Inform (60s) untuk ${session.currentModemSN}`)
+        const responseXml = createSetPeriodicInform(session.currentCwmpId, session.currentCwmpNamespace, session.currentModemProfile || 'InternetGatewayDevice', 60);
+        return new Response(responseXml, {
+          headers: {
+            'Content-Type': 'text/xml',
+            'Server': 'Hono-MiniACS',
+            'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+          }
+        })
+      }
+
       if (session.stage === 'discover_params') {
         const rootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
           ? 'Device.'
@@ -1156,6 +1173,61 @@ const cwmpHandler = async (c: any) => {
     }
 
     if (bodyText.includes('SetParameterValuesResponse')) {
+      if (session.stage === 'set_periodic_inform') {
+        console.log(`[CWMP] Periodic Inform berhasil dikonfigurasi pada modem ${session.currentModemSN}.`)
+        if (session.currentTriggeredClientId) {
+          try {
+            await db.update(clients)
+              .set({ periodicInformConfigured: true })
+              .where(eq(clients.id, session.currentTriggeredClientId))
+            console.log(`[DB] Menandai periodicInformConfigured = true untuk clientId=${session.currentTriggeredClientId}`)
+          } catch (dbErr: any) {
+            console.error(`[DB] Gagal menyimpan status periodic inform ke DB:`, dbErr.message)
+          }
+        }
+
+        let hasCache = false
+        if (session.currentTriggeredClientId) {
+          try {
+            const rows = await db.select().from(clients).where(eq(clients.id, session.currentTriggeredClientId)).limit(1)
+            const row = rows[0] as any
+            if (row && row.parameterListJson) {
+              const list = JSON.parse(row.parameterListJson)
+              if (Array.isArray(list) && list.length > 0) hasCache = true
+            }
+          } catch {}
+        }
+
+        session.stage = hasCache ? 'params' : 'discover_params'
+        session.updatedAt = Date.now()
+        cwmpSessions.set(sessionKey, session)
+
+        if (session.stage === 'discover_params') {
+          const rootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
+            ? 'Device.'
+            : 'InternetGatewayDevice.'
+          console.log(`[CWMP] Transisi set_periodic_inform -> discover_params. Mengirim GetParameterNames root '${rootPath}'`)
+          const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, rootPath, false);
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        } else {
+          console.log(`[CWMP] Transisi set_periodic_inform -> params. Mengirim GetParameterValues untuk ${session.currentModemSN}`)
+          const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+      }
+
       const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
       const prog = getFirstProgress(progressKeys)
       if (prog) {
@@ -1418,6 +1490,62 @@ const cwmpHandler = async (c: any) => {
 
     if (bodyText.includes('Fault') || bodyText.includes('fault')) {
       const faultCode = (bodyText.match(/<FaultCode>(\d+)<\/FaultCode>/) || [])[1] || '?';
+
+      if (session.stage === 'set_periodic_inform') {
+        console.warn(`[CWMP] Gagal konfigurasi Periodic Inform untuk ${session.currentModemSN} (Fault: ${faultCode}). Lanjut ke stage berikutnya...`)
+        
+        if (session.currentTriggeredClientId) {
+          try {
+            await db.update(clients)
+              .set({ periodicInformConfigured: true })
+              .where(eq(clients.id, session.currentTriggeredClientId))
+            console.log(`[DB] Menandai periodicInformConfigured = true untuk clientId=${session.currentTriggeredClientId} meskipun gagal (agar tidak infinite loop)`)
+          } catch (dbErr: any) {
+            console.error(`[DB] Gagal menyimpan status periodic inform ke DB:`, dbErr.message)
+          }
+        }
+
+        let hasCache = false
+        if (session.currentTriggeredClientId) {
+          try {
+            const rows = await db.select().from(clients).where(eq(clients.id, session.currentTriggeredClientId)).limit(1)
+            const row = rows[0] as any
+            if (row && row.parameterListJson) {
+              const list = JSON.parse(row.parameterListJson)
+              if (Array.isArray(list) && list.length > 0) hasCache = true
+            }
+          } catch {}
+        }
+
+        session.stage = hasCache ? 'params' : 'discover_params'
+        session.updatedAt = Date.now()
+        cwmpSessions.set(sessionKey, session)
+
+        if (session.stage === 'discover_params') {
+          const rootPath = session.currentParamsToRequest?.some(param => param.startsWith('Device.')) || session.currentModemProfile === 'Device'
+            ? 'Device.'
+            : 'InternetGatewayDevice.'
+          console.log(`[CWMP] Transisi set_periodic_inform -> discover_params. Mengirim GetParameterNames root '${rootPath}'`)
+          const responseXml = createGetParameterNames(session.currentCwmpId, session.currentCwmpNamespace, rootPath, false);
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        } else {
+          console.log(`[CWMP] Transisi set_periodic_inform -> params. Mengirim GetParameterValues untuk ${session.currentModemSN}`)
+          const responseXml = createGetParameterValues(session.currentCwmpId, session.currentCwmpNamespace, session.currentParamsToRequest);
+          return new Response(responseXml, {
+            headers: {
+              'Content-Type': 'text/xml',
+              'Server': 'Hono-MiniACS',
+              'Set-Cookie': `session=${sessionKey}; Path=/; HttpOnly`
+            }
+          })
+        }
+      }
 
       if (session.currentTriggeredClientId) {
         const pendingConfig = pendingConfigs.get(session.currentTriggeredClientId)
