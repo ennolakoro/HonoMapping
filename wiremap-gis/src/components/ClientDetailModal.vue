@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, onBeforeUnmount } from 'vue'
 import { api } from '../api'
 
 const props = defineProps({
@@ -16,6 +16,88 @@ const routeParentId = ref('')
 const routeMessage = ref('')
 const pppoeCredential = ref(null)
 const pppoeCredentialStatus = ref('')
+
+const isMonitoringRealtime = ref(false)
+const monitoringStatus = ref('')
+let monitorIntervalId = null
+
+const clearMonitorInterval = () => {
+  if (monitorIntervalId) {
+    clearInterval(monitorIntervalId)
+    monitorIntervalId = null
+  }
+}
+
+const triggerRealtimeMonitor = async (device) => {
+  if (!device || device.type !== 'CLIENT') return
+  const targetIp = device.lanIp || device.wanIp
+  if (!targetIp) return
+
+  clearMonitorInterval()
+
+  isMonitoringRealtime.value = true
+  monitoringStatus.value = 'Menghubungi modem...'
+
+  try {
+    await api.informClient(device.id)
+    monitoringStatus.value = 'Mengambil data real-time...'
+
+    const statusKeys = [targetIp, String(device.id)].filter(Boolean)
+    const timeoutAt = Date.now() + 45000
+
+    monitorIntervalId = setInterval(async () => {
+      if (Date.now() > timeoutAt) {
+        clearMonitorInterval()
+        isMonitoringRealtime.value = false
+        monitoringStatus.value = 'Timeout sinkronisasi real-time.'
+        return
+      }
+
+      try {
+        const statusMap = await api.getModemSyncStatus()
+        const status = statusKeys.map(key => statusMap[key]).find(Boolean)
+
+        if (status) {
+          if (status.status === 'success') {
+            clearMonitorInterval()
+            isMonitoringRealtime.value = false
+            monitoringStatus.value = 'Sinkronisasi real-time selesai.'
+            window.dispatchEvent(new CustomEvent('refresh-map'))
+          } else if (status.status === 'failed') {
+            clearMonitorInterval()
+            isMonitoringRealtime.value = false
+            monitoringStatus.value = `Gagal sinkronisasi: ${status.error || 'error'}`
+          } else if (status.status === 'fetching') {
+            monitoringStatus.value = `Sedang mengambil data: ${status.progress || 80}%`
+          } else if (status.status === 'connected') {
+            monitoringStatus.value = 'Modem terhubung, mengambil data...'
+          }
+        }
+      } catch (err) {
+        console.error('Error polling sync status:', err)
+      }
+    }, 2500)
+
+  } catch (err) {
+    console.warn('Gagal memicu monitoring real-time:', err)
+    isMonitoringRealtime.value = false
+    monitoringStatus.value = 'Gagal sinkronisasi real-time.'
+  }
+}
+
+watch(() => props.isOpen, (isOpen) => {
+  if (isOpen && props.device?.type === 'CLIENT') {
+    triggerRealtimeMonitor(props.device)
+  } else {
+    clearMonitorInterval()
+    isMonitoringRealtime.value = false
+    monitoringStatus.value = ''
+  }
+})
+
+onBeforeUnmount(() => {
+  clearMonitorInterval()
+})
 
 const detailForm = ref({
   name: '',
@@ -462,11 +544,20 @@ const handlePushConfig = async () => {
 
       <div class="detail-body">
         <!-- Status Online Client -->
-        <div v-if="device?.type === 'CLIENT'" class="flex items-center justify-between mx-4 mt-2 mb-1.5 text-[11px] font-bold">
-          <span class="text-slate-400">Status Koneksi</span>
-          <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }" class="uppercase font-black tracking-wider">
-            ● {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
-          </strong>
+        <div v-if="device?.type === 'CLIENT'" class="flex flex-col gap-1 mx-4 mt-2 mb-1.5 text-[11px] font-bold">
+          <div class="flex items-center justify-between">
+            <span class="text-slate-400">Status Koneksi</span>
+            <strong :style="{ color: device?.isOnline ? '#34d399' : '#dc2626' }" class="uppercase font-black tracking-wider">
+              ● {{ device?.isOnline ? 'ONLINE' : 'OFFLINE' }}
+            </strong>
+          </div>
+          <div v-if="isMonitoringRealtime || monitoringStatus" class="flex items-center gap-1.5 text-[9px] text-sky-400 mt-0.5">
+            <span class="relative flex h-2 w-2">
+              <span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-sky-400 opacity-75"></span>
+              <span class="relative inline-flex rounded-full h-2 w-2 bg-sky-500"></span>
+            </span>
+            <span class="font-bold tracking-wide italic">{{ monitoringStatus }}</span>
+          </div>
         </div>
 
         <!-- Compact Alur Topologi Diagram -->

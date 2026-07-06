@@ -617,15 +617,56 @@ const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: 
         modemProfile: session.currentModemProfile ?? undefined
       })
 
+      let pppoeUser = '';
+      if (Array.isArray(params.wanConfig)) {
+        const found = params.wanConfig.find((w: any) => w.type === 'PPPoE' && w.username);
+        if (found) {
+          pppoeUser = found.username;
+        }
+      }
+      if (!pppoeUser && params.rawParams) {
+        const foundKey = Object.keys(params.rawParams).find(k => k.includes('WANPPPConnection') && k.endsWith('Username'));
+        if (foundKey) {
+          pppoeUser = params.rawParams[foundKey];
+        }
+      }
+
+      let finalClientId = session.currentTriggeredClientId;
+
+      if (pppoeUser && session.currentTriggeredClientId) {
+        const normalizedUser = pppoeUser.trim();
+        // Cari client yang memiliki pppoeUsername COCOK tapi SN-nya MASIH KOSONG (berarti antrean Fiber Queue dari Mikrotik)
+        const matched = await db.select()
+          .from(clients)
+          .where(eq(clients.pppoeUsername, normalizedUser))
+          .limit(1);
+
+        if (matched.length > 0 && matched[0].id !== session.currentTriggeredClientId) {
+          const matchedClientId = matched[0].id;
+          console.log(`[DB MERGE] Mencocokkan PPPoE Username '${normalizedUser}': Merging temporary client id ${session.currentTriggeredClientId} ke client id ${matchedClientId} (dari Mikrotik Sync)`);
+
+          // Hapus baris temporary yang baru dibuat
+          await db.delete(clients).where(eq(clients.id, session.currentTriggeredClientId));
+          
+          // Gunakan ID client asli dari Mikrotik Sync
+          finalClientId = matchedClientId;
+          session.currentTriggeredClientId = matchedClientId;
+          
+          // Update progress keys agar menyertakan ID client asli
+          const progressKeys = [session.currentClientIp || '', String(matchedClientId)].filter(Boolean);
+          session.currentProgressKeys = progressKeys;
+        }
+      }
+
       let updatedRows: { id: number }[] = []
-      if (session.currentTriggeredClientId) {
+      if (finalClientId) {
         updatedRows = await db.update(clients)
           .set(modemParams)
-          .where(eq(clients.id, session.currentTriggeredClientId))
+          .where(eq(clients.id, finalClientId))
           .returning({ id: clients.id })
       }
 
-      if (updatedRows.length === 0) {
+      if (updatedRows.length === 0 && session.currentModemSN) {
         updatedRows = await db.update(clients)
           .set(modemParams)
           .where(eq(clients.snModem, session.currentModemSN))
