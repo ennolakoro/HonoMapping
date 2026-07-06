@@ -32,6 +32,12 @@ const isInformingAll = ref(false)
 const isWorkflowOpen = ref(false)
 const isClientInventoryOpen = ref(false)
 const workflowSearch = ref('')
+const mapDataStatus = ref({
+  total: 0,
+  plotted: 0,
+  error: '',
+  lastLoadAt: null
+})
 // Filter status plotting: 'UNMAPPED' | 'PLOTTED'
 const queuePlotFilter = ref('UNMAPPED')
 
@@ -164,6 +170,20 @@ const fitMapToDevicesOnce = (devices) => {
       animate: false
     })
   }, 120)
+}
+
+const updateMapDataStatus = (devices, error = '') => {
+  const list = Array.isArray(devices) ? devices : []
+  mapDataStatus.value = {
+    total: list.length,
+    plotted: list.filter(hasCoords).length,
+    error,
+    lastLoadAt: new Date().toLocaleTimeString('id-ID', {
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit'
+    })
+  }
 }
 
 const handleDocClickForSearch = (e) => {
@@ -964,6 +984,7 @@ const loadDevices = async () => {
     if (!Array.isArray(devices)) {
       throw new Error('Data perangkat yang diterima dari server tidak valid (bukan array).');
     }
+    updateMapDataStatus(devices)
     
     // Deteksi transisi status online -> offline (atau pemulihan) untuk log gangguan & alarm suara
     const isFirstLoad = Object.keys(previousOnlineStatuses).length === 0
@@ -1250,6 +1271,7 @@ const loadDevices = async () => {
 
     fitMapToDevicesOnce(devices)
   } catch (err) {
+    updateMapDataStatus([], err.message || 'Gagal memuat perangkat')
     console.error("Gagal menarik data topology:", err)
     if (Object.keys(previousOnlineStatuses).length === 0) {
       alert("Gagal memuat perangkat dari database server: " + err.message)
@@ -1779,6 +1801,26 @@ watch(allDevicesData, (newData) => {
       <span class="material-symbols-outlined">add</span>
     </button>
 
+    <div
+      v-if="mapDataStatus.error || mapDataStatus.total === 0 || mapDataStatus.plotted === 0"
+      class="map-data-status"
+      :class="{ 'is-error': mapDataStatus.error }"
+    >
+      <span class="material-symbols-outlined">{{ mapDataStatus.error ? 'error' : 'info' }}</span>
+      <div>
+        <strong v-if="mapDataStatus.error">{{ mapDataStatus.error }}</strong>
+        <strong v-else-if="mapDataStatus.total === 0">Data peta kosong</strong>
+        <strong v-else>Belum ada perangkat berkoordinat</strong>
+        <small>
+          Total: {{ mapDataStatus.total }} | Koordinat: {{ mapDataStatus.plotted }}
+          <template v-if="mapDataStatus.lastLoadAt"> | {{ mapDataStatus.lastLoadAt }}</template>
+        </small>
+      </div>
+      <button type="button" @click="refreshMapAndLoadDevices">
+        <span class="material-symbols-outlined">refresh</span>
+      </button>
+    </div>
+
     <div v-if="store.mapMode === 'PLOT_CLIENT'" class="absolute top-20 left-1/2 z-20 -translate-x-1/2 rounded-lg border border-blue-200 bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-lg">
       Klik lokasi rumah {{ store.plottingClient?.name || 'pelanggan' }} di peta
     </div>
@@ -2185,6 +2227,75 @@ watch(allDevicesData, (newData) => {
 
 .floating-add-node .material-symbols-outlined {
   font-size: 22px;
+}
+
+.map-data-status {
+  position: absolute;
+  right: 76px;
+  bottom: 24px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: min(360px, calc(100vw - 112px));
+  border: 1px solid rgba(14, 165, 233, 0.28);
+  border-radius: 12px;
+  background: rgba(15, 23, 42, 0.86);
+  color: #e0f2fe;
+  padding: 10px 12px;
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.32);
+  backdrop-filter: blur(10px);
+}
+
+.map-data-status.is-error {
+  border-color: rgba(248, 113, 113, 0.4);
+  color: #fecaca;
+}
+
+.map-data-status > .material-symbols-outlined {
+  flex: 0 0 auto;
+  font-size: 20px;
+}
+
+.map-data-status div {
+  min-width: 0;
+}
+
+.map-data-status strong,
+.map-data-status small {
+  display: block;
+}
+
+.map-data-status strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.map-data-status small {
+  margin-top: 2px;
+  color: #93c5fd;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.map-data-status button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 8px;
+  background: rgba(14, 165, 233, 0.16);
+  color: #bae6fd;
+  cursor: pointer;
+}
+
+.map-data-status button .material-symbols-outlined {
+  font-size: 16px;
 }
 
 .is-placing-device :deep(.leaflet-container),
