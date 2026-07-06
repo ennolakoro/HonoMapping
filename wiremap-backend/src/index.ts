@@ -674,6 +674,21 @@ const saveModemDataToDb = async (c: any, db: any, session: CwmpSession, params: 
   }
 }
 
+const finishCwmpUsingCachedData = (session: CwmpSession, clientIp: string, warning?: string) => {
+  const progressKeys = session.currentProgressKeys?.length ? session.currentProgressKeys : [clientIp]
+  const prog = getFirstProgress(progressKeys)
+  if (prog) {
+    setProgressForKeys(progressKeys, {
+      ...prog,
+      progress: 100,
+      status: 'success',
+      error: null,
+      updatedAt: Date.now()
+    })
+  }
+  if (warning) console.warn(`[CWMP] ${warning}`)
+}
+
 // Endpoint Mini ACS (Terbuka untuk Modem / CPE)
 const cwmpHandler = async (c: any) => {
   const bodyText = await c.req.text()
@@ -1241,8 +1256,8 @@ const cwmpHandler = async (c: any) => {
           })
         }
 
-        const params = { rawParams: {}, wanConfig: [], connectedHosts: [] }
-        await saveModemDataToDb(c, db, session, params, clientIp)
+        finishCwmpUsingCachedData(session, clientIp, 'WAN discovery tidak menemukan parameter baru. Cache lama tetap dipakai.')
+        console.warn(`[CWMP] Discovery WAN tidak menemukan parameter untuk ${session.currentModemSN}. Cache lama tidak ditimpa.`)
         cwmpSessions.delete(sessionKey)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
@@ -1373,8 +1388,8 @@ const cwmpHandler = async (c: any) => {
           })
         }
 
-        const params = { rawParams: {}, wanConfig: [], connectedHosts: [] }
-        await saveModemDataToDb(c, db, session, params, clientIp)
+        finishCwmpUsingCachedData(session, clientIp, 'WAN discovery tidak menemukan parameter baru. Cache lama tetap dipakai.')
+        console.warn(`[CWMP] Semua root WAN ditolak oleh ${session.currentModemSN}. Cache lama tidak ditimpa.`)
         cwmpSessions.delete(sessionKey)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
@@ -1383,6 +1398,28 @@ const cwmpHandler = async (c: any) => {
         const params = session.pendingModemData || {}
         params.connectedHosts = []
         await saveModemDataToDb(c, db, session, params, clientIp)
+        cwmpSessions.delete(sessionKey)
+        return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
+      }
+
+      if (session.currentRequestMode === 'discover-wan' && (faultCode === '9005' || faultCode === '9007')) {
+        const params = session.pendingModemData
+        const hasUsefulData = params && (
+          Object.keys(params.rawParams || {}).length > 0 ||
+          (Array.isArray(params.wanConfig) && params.wanConfig.length > 0) ||
+          params.ssid ||
+          params.ssid5g ||
+          params.rxPower
+        )
+        if (hasUsefulData) {
+          if (Array.isArray(params.wanConfig) && params.wanConfig.length === 0) {
+            delete params.wanConfig
+          }
+          await saveModemDataToDb(c, db, session, params, clientIp)
+        } else {
+          finishCwmpUsingCachedData(session, clientIp, `Modem menolak sebagian parameter discovery (${faultCode}). Cache lama tetap dipakai.`)
+        }
+        console.warn(`[CWMP] Discovery WAN dihentikan dengan fault ${faultCode} untuk ${session.currentModemSN}. Data parsial/cache tetap dipakai.`)
         cwmpSessions.delete(sessionKey)
         return new Response('', { status: 200, headers: { 'Content-Length': '0' } })
       }
@@ -1787,7 +1824,7 @@ app.get('/api/protected/clients', async (c) => {
     const db = getDb(c.env)
     await ensureClientInventoryColumns(db)
     const search = (c.req.query('search') || '').trim().toLowerCase()
-    const activeByUsername = await getActivePppoeMap(c, db)
+    const activeByUsername = await getActivePppoeMap(c, db, { cacheOnly: true })
     const rows = await db.select().from(clients)
     const filtered = search
       ? rows.filter((client: any) =>
@@ -1829,43 +1866,55 @@ const triggerClientInformById = async (c: any, mode: 'inform' | 'discover-wan') 
   if (!modemIp) return c.json({ error: 'IP management modem belum tersedia' }, 400)
   const { MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, MIKROTIK_BRIDGE_URL } = await getEnv(c, db)
   const connectionRequestUrl = client.connectionRequestUrl || modemConnectionUrls.get(modemIp) || null
-  syncProgress.set(modemIp, {
+  const progressKeys = [modemIp, String(id)]
+  const initialProgress: SyncProgress = {
     id,
     username: client.name,
     progress: 10,
     status: 'triggered',
     mode,
     updatedAt: Date.now()
-  })
-  syncProgress.set(String(id), {
-    id,
-    username: client.name,
-    progress: 10,
-    status: 'triggered',
-    mode,
-    updatedAt: Date.now()
-  })
-  let triggered = false
-  let triggerError: string | null = null
-  try {
-    triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
-  } catch (err: any) {
-    triggerError = err.message || 'Trigger modem timeout'
-    console.warn(`[Clients] Trigger ${mode} untuk ${client.name} (${modemIp}) timeout/gagal, tetap menunggu Inform berikutnya:`, triggerError)
   }
+  setProgressForKeys(progressKeys, initialProgress)
+
+  void (async () => {
+    try {
+      const triggered = await triggerModemCWMP(MIKROTIK_IP, MIKROTIK_USER, MIKROTIK_PASS, modemIp, MIKROTIK_BRIDGE_URL, connectionRequestUrl)
+      const current = getFirstProgress(progressKeys)
+      if (current && triggered && !['success', 'failed'].includes(current.status)) {
+        setProgressForKeys(progressKeys, {
+          ...current,
+          progress: Math.max(current.progress || 10, 25),
+          status: 'connected',
+          error: null,
+          updatedAt: Date.now()
+        })
+      }
+    } catch (err: any) {
+      const triggerError = err.message || 'Trigger modem timeout'
+      console.warn(`[Clients] Trigger ${mode} untuk ${client.name} (${modemIp}) timeout/gagal, tetap menunggu Inform berikutnya:`, triggerError)
+      const current = getFirstProgress(progressKeys)
+      if (current && !['success', 'failed'].includes(current.status)) {
+        setProgressForKeys(progressKeys, {
+          ...current,
+          progress: Math.max(current.progress || 10, 20),
+          status: 'triggered',
+          error: null,
+          updatedAt: Date.now()
+        })
+      }
+    }
+  })()
+
   return c.json({
     success: true,
     mode,
-    triggered,
-    queued: !triggered,
-    triggerError,
+    triggered: false,
+    queued: true,
+    triggerError: null,
     message: mode === 'discover-wan'
-      ? (triggered
-          ? 'Discovery WAN dikirim. Menunggu modem Inform dan mengirim parameter WAN.'
-          : 'Discovery WAN masuk antrian. Sistem akan memakai Inform berikutnya dari modem.')
-      : (triggered
-          ? 'Inform dikirim. Menunggu modem mengirim data terbaru.'
-          : 'Inform masuk antrian. Sistem akan memakai Inform berikutnya dari modem.')
+      ? 'Discovery WAN masuk antrian. Sistem akan memakai Inform berikutnya dari modem.'
+      : 'Inform masuk antrian. Sistem akan memakai Inform berikutnya dari modem.'
   })
 }
 

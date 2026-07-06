@@ -48,7 +48,6 @@ const adminForm = ref({
 })
 
 let pollTimer = null
-const autoDiscoveryStarted = new Set()
 
 const display = (value, fallback = 'N/A') => {
   if (value === null || value === undefined || value === '') return fallback
@@ -195,10 +194,6 @@ const selectClient = async (client) => {
   try {
     selectedClient.value = await api.getClientDetail(client.id)
     syncFormsFromClient()
-    if (!autoDiscoveryStarted.has(client.id) && selectedClient.value?.triggerIp) {
-      autoDiscoveryStarted.add(client.id)
-      discoverWan({ automatic: true })
-    }
   } catch (err) {
     actionMessage.value = 'Gagal buka detail: ' + err.message
     actionState.value = 'failed'
@@ -216,7 +211,7 @@ const backToList = () => {
 
 const waitForClientSync = async (client, label = 'Menunggu modem Inform...', options = {}) => {
   const keys = [client.triggerIp, String(client.id)].filter(Boolean)
-  const timeoutAt = Date.now() + 120000
+  const timeoutAt = Date.now() + (options.timeoutMs || 60000)
   const repokeEveryMs = options.repokeEveryMs || 25000
   const maxRepoke = options.maxRepoke ?? 3
   let lastPokeAt = Date.now()
@@ -265,12 +260,12 @@ const waitForClientSync = async (client, label = 'Menunggu modem Inform...', opt
   throw new Error('Timeout menunggu modem mengirim data')
 }
 
-const discoverWan = async ({ automatic = false } = {}) => {
+const discoverWan = async () => {
   if (!selectedClient.value) return
   const clientId = selectedClient.value.id
   const clientSnapshot = { ...selectedClient.value }
   isDiscovering.value = true
-  actionMessage.value = automatic ? 'Auto discovery WAN berjalan...' : 'Refresh data modem dan WAN...'
+  actionMessage.value = 'Mengirim colek modem untuk data terbaru...'
   actionProgress.value = 10
   actionState.value = 'triggered'
   try {
@@ -279,9 +274,12 @@ const discoverWan = async ({ automatic = false } = {}) => {
       actionMessage.value = 'Colek modem dikirim. Menunggu modem membalas Inform...'
     }
     await waitForClientSync(clientSnapshot, 'Menunggu modem mengirim WAN configuration...', {
+      timeoutMs: 45000,
+      repokeEveryMs: 18000,
+      maxRepoke: 1,
       repoke: () => api.discoverClientWan(clientSnapshot.id)
     })
-    actionMessage.value = automatic ? 'Data WAN otomatis diperbarui' : 'Data modem dan WAN diperbarui'
+    actionMessage.value = 'Data modem dan WAN diperbarui'
   } catch (err) {
     const message = err.message || ''
     try {
@@ -301,7 +299,7 @@ const discoverWan = async ({ automatic = false } = {}) => {
       return
     }
 
-    actionMessage.value = (automatic ? 'Auto discovery gagal: ' : 'Gagal refresh data: ') + message
+    actionMessage.value = 'Gagal refresh data: ' + message
     actionProgress.value = 100
     actionState.value = 'failed'
   } finally {
@@ -311,7 +309,7 @@ const discoverWan = async ({ automatic = false } = {}) => {
 
 const handleRefresh = async () => {
   if (selectedClient.value) {
-    await discoverWan({ automatic: false })
+    await discoverWan()
   } else {
     await loadClients()
   }
@@ -330,6 +328,9 @@ const informClient = async () => {
       actionMessage.value = 'Colek modem dikirim. Menunggu modem membalas Inform...'
     }
     await waitForClientSync(selectedClient.value, 'Menunggu modem mengirim data terbaru...', {
+      timeoutMs: 45000,
+      repokeEveryMs: 18000,
+      maxRepoke: 1,
       repoke: () => api.informClient(clientId)
     })
     actionMessage.value = 'Data modem diperbarui'
@@ -525,7 +526,6 @@ const saveAdminConfig = async () => {
 
 watch(() => props.isOpen, (isOpen) => {
   if (isOpen) {
-    autoDiscoveryStarted.clear()
     loadClients()
   } else if (pollTimer) {
     clearInterval(pollTimer)
