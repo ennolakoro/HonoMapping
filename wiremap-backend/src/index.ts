@@ -1952,7 +1952,8 @@ app.get('/api/protected/clients/:id/detail', async (c) => {
   try {
     const db = getDb(c.env)
     await ensureClientInventoryColumns(db)
-    const id = parseInt(c.req.param('id'), 10)
+    let id = parseInt(c.req.param('id'), 10)
+    if (id >= 1000000) id -= 1000000
     const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
     if (!rows[0]) return c.json({ error: 'Client tidak ditemukan' }, 404)
     const activeByUsername = await getActivePppoeMap(c, db, { cacheOnly: true })
@@ -1968,7 +1969,8 @@ app.get('/api/protected/clients/:id/detail', async (c) => {
 const triggerClientInformById = async (c: any, mode: 'inform' | 'discover-wan') => {
   const db = getDb(c.env)
   await ensureClientInventoryColumns(db)
-  const id = parseInt(c.req.param('id'), 10)
+  let id = parseInt(c.req.param('id'), 10)
+  if (id >= 1000000) id -= 1000000
   const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
   const client = rows[0] as any
   if (!client) return c.json({ error: 'Client tidak ditemukan' }, 404)
@@ -2048,7 +2050,8 @@ app.patch('/api/protected/clients/:id/admin-config', async (c) => {
   try {
     const db = getDb(c.env)
     await ensureClientInventoryColumns(db)
-    const id = parseInt(c.req.param('id'), 10)
+    let id = parseInt(c.req.param('id'), 10)
+    if (id >= 1000000) id -= 1000000
     const body = await c.req.json()
     await db.update(clients)
       .set({
@@ -2066,7 +2069,8 @@ app.post('/api/protected/clients/:id/create-wan-ppp', async (c) => {
   try {
     const db = getDb(c.env)
     await ensureClientInventoryColumns(db)
-    const id = parseInt(c.req.param('id'), 10)
+    let id = parseInt(c.req.param('id'), 10)
+    if (id >= 1000000) id -= 1000000
     const body = await c.req.json()
     const rows = await db.select().from(clients).where(eq(clients.id, id)).limit(1)
     const client = rows[0] as any

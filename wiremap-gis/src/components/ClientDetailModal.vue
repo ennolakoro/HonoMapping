@@ -17,6 +17,12 @@ const routeMessage = ref('')
 const pppoeCredential = ref(null)
 const pppoeCredentialStatus = ref('')
 
+const realClientId = computed(() => {
+  const id = props.device?.id
+  if (id === undefined || id === null) return null
+  return id >= 1000000 ? id - 1000000 : id
+})
+
 const isMonitoringRealtime = ref(false)
 const monitoringStatus = ref('')
 let monitorIntervalId = null
@@ -39,10 +45,10 @@ const triggerRealtimeMonitor = async (device) => {
   monitoringStatus.value = 'Menghubungi modem...'
 
   try {
-    await api.informClient(device.id)
+    await api.informClient(realClientId.value)
     monitoringStatus.value = 'Mengambil data real-time...'
 
-    const statusKeys = [targetIp, String(device.id)].filter(Boolean)
+    const statusKeys = [targetIp, String(realClientId.value)].filter(Boolean)
     const timeoutAt = Date.now() + 45000
 
     monitorIntervalId = setInterval(async () => {
@@ -292,7 +298,7 @@ const handleSaveDetails = async () => {
   try {
     isSavingDetails.value = true
     saveMessage.value = ''
-    await api.updateDevice(props.device.id, {
+    await api.updateDevice(realClientId.value, {
       type: props.device.type,
       name: detailForm.value.name,
       phone: detailForm.value.phone,
@@ -316,7 +322,7 @@ const handleSaveRoute = async () => {
   if (!props.device) return
   try {
     routeMessage.value = ''
-    await api.updateDeviceParent(props.device.id, routeParentId.value || null, props.device.type)
+    await api.updateDeviceParent(realClientId.value, routeParentId.value || null, props.device.type)
     routeMessage.value = 'Route diperbarui'
     window.dispatchEvent(new CustomEvent('refresh-map'))
   } catch (err) {
@@ -331,7 +337,7 @@ const handleRemoveRoute = async () => {
   try {
     routeMessage.value = ''
     routeParentId.value = ''
-    await api.updateDeviceParent(props.device.id, null, props.device.type)
+    await api.updateDeviceParent(realClientId.value, null, props.device.type)
     routeMessage.value = 'Route dilepas'
     window.dispatchEvent(new CustomEvent('refresh-map'))
   } catch (err) {
@@ -483,7 +489,7 @@ const handlePushConfig = async () => {
     }
 
     const payload = {
-      deviceId: props.device.id,
+      deviceId: realClientId.value,
       params
     }
 
@@ -494,8 +500,7 @@ const handlePushConfig = async () => {
     configProgress.value = res.triggered ? 18 : 12
     configState.value = 'triggered'
     emit('start-polling')
-    const realClientId = props.device.id >= 1000000 ? props.device.id - 1000000 : props.device.id
-    await waitForConfigApply(targetIp, realClientId)
+    await waitForConfigApply(targetIp, realClientId.value)
     configMessage.value = 'Berhasil diterapkan ke modem. Data detail diperbarui.'
     resetConfigFormFromDevice()
   } catch (err) {
