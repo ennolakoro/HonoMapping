@@ -213,10 +213,7 @@ export function filterDynamicParameters(names: string[]): string[] {
     
     // WiFi Configurations
     /WLANConfiguration\.\d+\.(SSID|KeyPassphrase)$/i,
-    /WLANConfiguration\.\d+\.PreSharedKey\.\d+\.PreSharedKey$/i,
-    /WLANConfiguration\.\d+\.(TotalAssociations|AssociatedDeviceNumberOfEntries)$/i,
     /WiFi\.SSID\.\d+\.SSID$/i,
-    /WiFi\.AccessPoint\.\d+\.AssociatedDeviceNumberOfEntries$/i,
     
     // Admin Credential
     /UserInterface\..*UserName$/i,
