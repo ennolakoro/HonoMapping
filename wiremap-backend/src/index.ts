@@ -2635,6 +2635,8 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
       .set({ isOnline: false })
       .where(eq(clients.clientType, 'HOTSPOT'))
 
+    const existingClients = await db.select().from(clients)
+
     let created = 0, updated = 0, skipped = 0
 
     for (const lease of leases) {
@@ -2677,23 +2679,25 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
 
       if (matchedPppoe) {
         // MAC ini milik PPPoE user yang aktif. Ini modem yang sama!
-        // Cari entri client di database berdasarkan PPPoE username atau MAC
-        const existing = await db.select()
-          .from(clients)
-          .where(eq(clients.pppoeUsername, matchedPppoe.username))
-          .limit(1)
+        // Cari entri client di database berdasarkan PPPoE username atau MAC (dari cache in-memory)
+        const existing = existingClients.find(c => c.pppoeUsername === matchedPppoe.username)
 
-        if (existing[0]) {
+        if (existing) {
           // Update lanIp (IP management lokal) untuk client PPPoE yang sudah ada
           await db.update(clients)
             .set({ 
               lanIp: ip, 
-              macAddress: existing[0].macAddress || mac, // Lengkapi MAC jika kosong
+              macAddress: existing.macAddress || mac, // Lengkapi MAC jika kosong
               isOnline: true 
             })
-            .where(eq(clients.id, existing[0].id))
+            .where(eq(clients.id, existing.id))
+          
+          existing.lanIp = ip
+          existing.macAddress = existing.macAddress || mac
+          existing.isOnline = true
+          
           updated++
-          console.log(`[DHCP Sync] Satukan modem PPPoE & DHCP: ${existing[0].name} (PPPoE: ${matchedPppoe.username}) -> set lanIp: ${ip}`)
+          console.log(`[DHCP Sync] Satukan modem PPPoE & DHCP: ${existing.name} (PPPoE: ${matchedPppoe.username}) -> set lanIp: ${ip}`)
         } else {
           skipped++
         }
@@ -2705,8 +2709,7 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
         ? hostName.replace(/[^a-zA-Z0-9\-_. ]/g, '').trim()
         : `MODEM-${mac.toUpperCase().replace(/:/g, '').slice(-6)}`
 
-      // Cek apakah sudah ada berdasarkan MAC address (atau MAC toleran)
-      const existingClients = await db.select().from(clients)
+      // Cek apakah sudah ada berdasarkan MAC address (atau MAC toleran) dari cache in-memory
       const existingByLanIp = existingClients.find(c => c.lanIp === ip)
       const existingByMac = existingClients.find(c => isSameDeviceMac(c.macAddress || '', mac))
 
@@ -2731,6 +2734,10 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
             ))
         }
 
+        existingByLanIp.lanIp = ip
+        existingByLanIp.macAddress = existingByLanIp.macAddress || mac
+        existingByLanIp.isOnline = true
+
         updated++
         console.log(`[DHCP Sync] Lease ${ip} digabung ke record yang sudah ada: ${existingByLanIp.name}`)
       } else if (existingByMac) {
@@ -2742,11 +2749,15 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
             isOnline: true
           })
           .where(eq(clients.id, existingByMac.id))
+        
+        existingByMac.lanIp = ip
+        existingByMac.isOnline = true
+
         updated++
         console.log(`[DHCP Sync] HOTSPOT updated: ${existingByMac.name} → ${ip}`)
       } else {
         // Insert client HOTSPOT baru ke antrian
-        await db.insert(clients).values({
+        const inserted = await db.insert(clients).values({
           name: clientName,
           lanIp: ip,
           macAddress: mac,
@@ -2755,7 +2766,12 @@ app.post('/api/protected/sync-dhcp-leases', async (c) => {
           lat: null,
           lng: null,
           odpId: null
-        })
+        }).returning()
+        
+        if (inserted[0]) {
+          existingClients.push(inserted[0])
+        }
+
         created++
         console.log(`[DHCP Sync] HOTSPOT baru masuk antrian: ${clientName} (${ip})`)
       }
@@ -2802,6 +2818,14 @@ app.post('/api/protected/sync-real-mikrotik', async (c) => {
       return c.json({ error: 'Tidak ada client PPPoE aktif yang ditemukan di Mikrotik.' }, 404)
     }
 
+    // Bersihkan IP Publik dari record lama (agar tidak mengganggu visualisasi di UI) - Pindahkan keluar loop
+    await db.update(clients)
+      .set({ wanIp: null })
+      .where(eq(clients.wanIp, '36.75.220.32'))
+
+    // Tarik semua data clients sekali saja ke memori untuk in-memory matching
+    const allClients = await db.select().from(clients)
+
     let created = 0
     let updated = 0
 
@@ -2811,33 +2835,29 @@ app.post('/api/protected/sync-real-mikrotik', async (c) => {
       const wanIp = pppoe.address || pppoe['remote-address'] || pppoe.remoteAddress || null
       const macAddress = pppoe['caller-id'] || pppoe.callerId || pppoe.macAddress || pppoe.mac || null
 
-      // Bersihkan IP Publik dari record lama (agar tidak mengganggu visualisasi di UI)
-      await db.update(clients)
-        .set({ wanIp: null })
-        .where(eq(clients.wanIp, '36.75.220.32'))
-
       // Filter IP Publik: jangan simpan IP Publik NAT sebagai wanIp Mikrotik
       const validWanIp = wanIp && !isPublicIp(wanIp) ? wanIp : null
 
-      // Cari client berdasarkan pppoeUsername
-      const existingByUsername = await db.select()
-        .from(clients)
-        .where(eq(clients.pppoeUsername, username))
-        .limit(1)
+      // Cari client berdasarkan pppoeUsername (dari in-memory cache)
+      const existingByUsername = allClients.find(c => c.pppoeUsername === username)
 
-      // Cari client berdasarkan MAC Address toleransi 5-byte
-      const allClients = await db.select().from(clients)
+      // Cari client berdasarkan MAC Address toleransi 5-byte (dari in-memory cache)
       const existingByMac = macAddress ? allClients.find(c => isSameDeviceMac(c.macAddress || '', macAddress)) : null
 
-      if (existingByUsername[0]) {
+      if (existingByUsername) {
         // Update client yang sudah ada via PPPoE username
         await db.update(clients)
           .set({
-            wanIp: validWanIp || existingByUsername[0].wanIp,
-            macAddress: existingByUsername[0].macAddress || macAddress,
+            wanIp: validWanIp || existingByUsername.wanIp,
+            macAddress: existingByUsername.macAddress || macAddress,
             isOnline: true
           })
-          .where(eq(clients.id, existingByUsername[0].id))
+          .where(eq(clients.id, existingByUsername.id))
+        
+        existingByUsername.wanIp = validWanIp || existingByUsername.wanIp
+        existingByUsername.macAddress = existingByUsername.macAddress || macAddress
+        existingByUsername.isOnline = true
+
         updated++
       } else if (existingByMac) {
         // SATUKAN! Jika data Inform ACS sudah masuk dengan MAC yang sama,
@@ -2861,11 +2881,18 @@ app.post('/api/protected/sync-real-mikrotik', async (c) => {
               isNull(clients.snModem)
             ))
         }
+
+        existingByMac.pppoeUsername = username
+        existingByMac.name = username
+        existingByMac.wanIp = validWanIp || existingByMac.wanIp
+        existingByMac.macAddress = existingByMac.macAddress || macAddress
+        existingByMac.isOnline = true
+
         updated++
         console.log(`[PPPoE Sync] Satukan data ACS (SN: ${existingByMac.snModem}) dengan PPPoE ${username} berdasarkan MAC`)
       } else {
         // Insert baru ke antrian jika benar-benar baru
-        await db.insert(clients).values({
+        const inserted = await db.insert(clients).values({
           name: username,
           pppoeUsername: username,
           wanIp: validWanIp,
@@ -2874,7 +2901,12 @@ app.post('/api/protected/sync-real-mikrotik', async (c) => {
           lng: null,
           odpId: null,
           isOnline: true
-        })
+        }).returning()
+        
+        if (inserted[0]) {
+          allClients.push(inserted[0])
+        }
+        
         created++
       }
     }
